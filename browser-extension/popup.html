@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UIQuarry</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main>
+    <header><div class="mark">Q</div><div><h1>UIQuarry</h1><p>Capture a component for your library</p></div></header>
+    <label for="name">Component name</label>
+    <input id="name" maxlength="100" value="Captured component" autocomplete="off">
+    <label for="tags">Tags <span>comma separated</span></label>
+    <input id="tags" maxlength="300" placeholder="button, navigation, card" autocomplete="off">
+    <button id="start" type="button"><span aria-hidden="true">⌖</span> Pick an element</button>
+    <p id="status" role="status">Captures stay in this browser. Nothing is uploaded automatically.</p>
+    <section aria-labelledby="recent-heading">
+      <h2 id="recent-heading">Recent captures</h2>
+      <ul id="recent"></ul>
+    </section>
+    <p class="hint">After starting, hover to inspect and click to capture. Press Esc to cancel.</p>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "demo/hero-card",
+  "name": "Hero card",
+  "kind": "component",
+  "description": "A small example package manifest.",
+  "tags": ["card", "hero"],
+  "createdAt": "2026-11-19T00:00:00Z",
+  "license": "MIT",
+  "origin": {
+    "remote": "https://github.com/example/uiquarry-demo.git",
+    "commit": "0123456789abcdef0123456789abcdef01234567",
+    "ref": "main"
+  },
+  "files": [
+    {"path": "components/hero-card/index.html", "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "size": 128, "mediaType": "text/html"},
+    {"path": "designs/hero-card/design.json", "sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789", "size": 256, "mediaType": "application/json"}
+  ],
+  "entrypoints": ["components/hero-card/index.html"],
+  "designBindings": [{"designId": "hero-card", "file": "designs/hero-card/design.json", "nodeId": "hero-root", "generatedBy": "uiquarry-html-css@1"}]
+}

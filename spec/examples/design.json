@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "hero-card",
+  "name": "Hero card",
+  "root": {
+    "id": "hero-root",
+    "type": "container",
+    "name": "Hero card",
+    "layout": {"mode": "flex", "direction": "column", "gap": "space-3", "padding": "space-5", "width": "100%"},
+    "styles": {"backgroundColor": "surface", "borderRadius": "12px", "color": "text"},
+    "children": [
+      {"id": "hero-title", "type": "text", "text": "Build from components", "styles": {"fontSize": "32px", "fontWeight": 700}},
+      {"id": "hero-action", "type": "button", "props": {"label": "Explore library", "variant": "primary"}, "variants": {"disabled": {"props": {"disabled": true}, "styles": {"opacity": 0.5}}}}
+    ]
+  },
+  "tokens": {"space-3": "12px", "space-5": "24px", "surface": "#ffffff", "text": "#1f2937"},
+  "assets": [],
+  "breakpoints": {"mobile": 480, "tablet": 768, "desktop": 1024},
+  "generator": {"name": "uiquarry-html-css", "version": "1", "target": "html-css"}
+}

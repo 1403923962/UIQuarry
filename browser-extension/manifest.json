@@ -1,0 +1,9 @@
+{
+  "manifest_version": 3,
+  "name": "UIQuarry · 构石",
+  "version": "0.1.0",
+  "description": "Capture reusable web components and save them to your local UIQuarry library.",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "background": { "service_worker": "service-worker.js" },
+  "action": { "default_popup": "popup.html", "default_title": "Capture with UIQuarry" }
+}

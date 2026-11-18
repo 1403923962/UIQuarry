@@ -1,14 +1,46 @@
-# UIQuarry · 构石
+# UIQuarry · 构石（开源浏览器本地采集器）
 
-UIQuarry 是一个面向 AI 辅助开发的网页组件采集与参考库。通过浏览器扩展选取网页元素，保存其 HTML、计算样式、关联脚本与交互记录，并整理为可供模型检索和引用的组件资料。
+UIQuarry public 是一个 GPL-3.0 开源的浏览器本地工具：选取网页元素，净化并提取 HTML/CSS，保存在浏览器本地，导出为普通 Git 可管理的组件包。它不包含网页工作台、云端存储、自动回传、团队权限、计费或商业 AI 检索服务。
 
-## 项目方向
+付费网页产品和云服务在独立的私有仓库中维护：[UIQuarry-Private](https://github.com/1403923962/UIQuarry-Private)。公开仓库只提供本地采集和离线导出能力。
 
-- 在浏览器中以类似元素检查器的方式选择并录制页面组件。
-- 将组件结构、样式、脚本和交互信息保存为可复用的档案。
-- 通过云端服务存储、搜索和提供组件参考资料。
-- 以 Rust 构建服务端；浏览器扩展使用 JavaScript 与 WebExtension API。
+## 产品边界
 
-## 状态
+- **浏览器本地采集**：扩展选中页面元素，记录经净化的 HTML、元素样式、尺寸和来源，全部保存在浏览器本机。它是参考快照，不假设能从任意网页完整还原 JSX、私有脚本或原始设计稿。
+- **离线组件包**：CLI 创建带 `quarry.json` 清单的普通 Git 文件包。开发者可以自行提交、克隆、fork、分支、合并和分享。
+- **公开格式**：`spec/` 定义捕获、组件包和受约束设计模型的公开格式，供私有产品或第三方工具消费。
+- **付费网页产品**：网页工作台、云端存储/检索、团队权限、计费、AI 上下文和设计编辑器均在私有仓库中维护，必须由用户主动导入资料。
 
-项目刚初始化，浏览器扩展、服务端和部署方案将在后续迭代中逐步实现。
+## 分阶段路线
+
+1. 浏览器本地选取与捕获 → 浏览器本地存储 → 离线导出 Git 组件包。
+2. 私有网页产品：包审阅、主动导入、团队权限、计费和 AI 检索。
+3. 私有网页工作台：受约束的设计模型编辑与 React/CSS 单向导出。
+4. 为带稳定 UIQuarry 节点 ID 的自有代码增加受限的代码到设计映射。
+
+公开采集器不会自动发起网络请求，不包含网页管理后台或云端接收接口。每份主动分享的资产都应记录原始来源、作者声明的许可，并在发布前检查个人信息和敏感内容。脚本捕获必须显式选择且单独审阅；不会默认收集整个网页脚本。
+
+## 仓库结构
+
+- `browser-extension/`：Chrome/Chromium Manifest V3 本地采集工具。
+- `cli/`：离线 Rust 组件包创建和校验工具。
+- `spec/`：捕获格式、Git 组件包和设计模型规范。
+- `packages/`：示例或可复用的组件包。
+
+## 本地试用
+
+1. 在 Chrome 打开 `chrome://extensions`，启用开发者模式，选择“加载已解压的扩展程序”，指向仓库中的 `browser-extension/`。
+2. 打开普通网页，点击工具栏 UIQuarry 图标，填写名称/标签，开始选择；悬停预览，点击元素保存，按 `Esc` 取消。
+3. 捕获始终只保存到浏览器本机，不会自动发起网络请求。扩展详情页可以查看最近捕获。
+4. 需要导出时，用 CLI 创建普通 Git 包：`cargo run --manifest-path cli/Cargo.toml -- package create capture.json out/demo-card demo/card`。
+
+CLI 使用说明见 [cli/README.md](cli/README.md)，捕获、Git 包和设计稿数据格式见 [spec/README.md](spec/README.md)，架构决策见 [docs/architecture.md](docs/architecture.md)。
+
+## 验证
+
+```powershell
+cargo test --manifest-path cli/Cargo.toml
+cargo clippy --manifest-path cli/Cargo.toml --all-targets -- -D warnings
+```
+
+浏览器扩展目前还需要在 Chrome 中手动完成界面/页面交互验收；尚未实现脚本导入界面或设计画布。付费网页和云端功能不在这个公开仓库中。

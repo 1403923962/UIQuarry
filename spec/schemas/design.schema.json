@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uiquarry.dev/schema/design-v1.json",
+  "title": "UIQuarry constrained design document",
+  "description": "Editable canvas source of truth. Export to code first; import back only recognized UIQuarry generated output with stable IDs.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "id", "name", "root", "tokens", "assets"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "name": {"type": "string", "minLength": 1, "maxLength": 200},
+    "description": {"type": "string", "maxLength": 4000},
+    "root": {"$ref": "#/$defs/node"},
+    "tokens": {"type": "object", "additionalProperties": {"type": ["string", "number"]}, "propertyNames": {"pattern": "^[a-zA-Z0-9_-]{1,80}$"}},
+    "assets": {"type": "array", "maxItems": 1000, "items": {"$ref": "#/$defs/asset"}},
+    "breakpoints": {
+      "type": "object", "additionalProperties": {"type": "integer", "minimum": 0},
+      "propertyNames": {"pattern": "^[a-zA-Z0-9_-]{1,40}$"}
+    },
+    "generator": {"type": "object", "additionalProperties": false, "properties": {"name": {"type": "string", "maxLength": 128}, "version": {"type": "string", "maxLength": 64}, "target": {"enum": ["html-css", "react"]}}}
+  },
+  "$defs": {
+    "node": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "type"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_-]+$"},
+        "type": {"enum": ["document", "frame", "container", "text", "image", "button", "input", "icon", "slot"]},
+        "name": {"type": "string", "maxLength": 200},
+        "props": {"type": "object", "additionalProperties": {"type": ["string", "number", "boolean", "null"]}},
+        "text": {"type": "string", "maxLength": 100000},
+        "assetId": {"type": "string", "maxLength": 128},
+        "layout": {"$ref": "#/$defs/layout"},
+        "styles": {"$ref": "#/$defs/styles"},
+        "responsive": {"type": "object", "additionalProperties": {"$ref": "#/$defs/styles"}},
+        "variants": {"type": "object", "maxProperties": 50, "additionalProperties": {"$ref": "#/$defs/variant"}},
+        "children": {"type": "array", "maxItems": 1000, "items": {"$ref": "#/$defs/node"}}
+      },
+      "allOf": [
+        {"if": {"properties": {"type": {"enum": ["document", "frame", "container"]}}, "required": ["type"]}, "then": {"properties": {"children": {"type": "array"}}}},
+        {"if": {"properties": {"type": {"const": "text"}}, "required": ["type"]}, "then": {"required": ["text"]}},
+        {"if": {"properties": {"type": {"const": "image"}}, "required": ["type"]}, "then": {"required": ["assetId"]}}
+      ]
+    },
+    "layout": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "mode": {"enum": ["flow", "flex", "grid", "absolute"]},
+        "direction": {"enum": ["row", "column"]},
+        "align": {"enum": ["start", "center", "end", "stretch", "baseline"]},
+        "justify": {"enum": ["start", "center", "end", "between", "around", "evenly"]},
+        "gap": {"type": ["string", "number"]},
+        "padding": {"type": ["string", "number"]},
+        "width": {"type": ["string", "number"]},
+        "height": {"type": ["string", "number"]},
+        "columns": {"type": ["string", "integer"]},
+        "rows": {"type": ["string", "integer"]},
+        "x": {"type": "number"}, "y": {"type": "number"}
+      }
+    },
+    "styles": {"type": "object", "propertyNames": {"pattern": "^[a-zA-Z][a-zA-Z0-9-]{0,80}$"}, "additionalProperties": {"type": ["string", "number", "null"]}},
+    "variant": {
+      "type": "object", "additionalProperties": false,
+      "properties": {"props": {"type": "object", "additionalProperties": {"type": ["string", "number", "boolean", "null"]}}, "styles": {"$ref": "#/$defs/styles"}}
+    },
+    "asset": {
+      "type": "object", "additionalProperties": false, "required": ["id", "path", "sha256"],
+      "properties": {"id": {"type": "string", "minLength": 1, "maxLength": 128}, "path": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.?(/|$))(?!.*\\\\)(?!.*:)[^\\u0000]+$"}, "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "mediaType": {"type": "string", "maxLength": 128}, "alt": {"type": "string", "maxLength": 1000}}
+    }
+  }
+}
