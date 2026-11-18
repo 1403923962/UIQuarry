@@ -6,8 +6,8 @@ $("import-file").addEventListener("change", async (event) => {
   const [file] = event.target.files || [];
   event.target.value = "";
   if (!file) return;
-  if (file.size > 4_000_000) {
-    $("status").textContent = "导入失败：JSON 文件不能超过 4 MB。";
+  if (file.size > 8 * 1024 * 1024) {
+    $("status").textContent = "导入失败：JSON 文件不能超过 8 MB。";
     return;
   }
   $("status").textContent = "正在读取本地文件…";
@@ -29,7 +29,7 @@ startButton.addEventListener("click", async () => {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) throw new Error("没有找到当前网页。");
     await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] });
-    const reply = await chrome.tabs.sendMessage(tab.id, { type: "START_PICKER", name: $("name").value.trim() || "已捕获组件", tags: $("tags").value.split(",").map((tag) => tag.trim()).filter(Boolean).slice(0, 20) });
+    const reply = await chrome.tabs.sendMessage(tab.id, { type: "START_PICKER", name: $("name").value.trim() || "已捕获组件", tags: $("tags").value.split(",").map((tag) => tag.trim()).filter(Boolean).slice(0, 20), includeScreenshot: $("include-screenshot").checked });
     if (!reply?.ok) throw new Error(reply?.error || "无法打开元素选择器。");
     $("status").textContent = "悬停查看元素，点击完成捕获；按 Esc 取消。";
     window.close();
@@ -91,7 +91,12 @@ function showDetails(capture) {
   const list = $("details-list"); list.replaceChildren();
   const fields = [["名称", capture.name || "未命名组件"], ["来源", capture.sourceUrl || "未知"], ["选择器", capture.selector || "未知"], ["捕获时间", formatDate(capture.capturedAt)], ["元素尺寸", capture.bounds ? `${capture.bounds.width} × ${capture.bounds.height}` : "未知"]];
   for (const [label, value] of fields) { const term = document.createElement("dt"); term.textContent = label; const description = document.createElement("dd"); description.textContent = value; description.title = value; list.append(term, description); }
-  $("details-preview").textContent = capture.html || "没有 HTML 预览"; $("details").hidden = false;
+  $("details-preview").textContent = capture.html || "没有 HTML 预览";
+  const screenshot = $("details-shot");
+  screenshot.hidden = typeof capture.screenshot !== "string";
+  screenshot.removeAttribute("src");
+  if (!screenshot.hidden) screenshot.src = capture.screenshot;
+  $("details").hidden = false;
 }
 
 function downloadCapture(record) {

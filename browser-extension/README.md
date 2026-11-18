@@ -15,9 +15,10 @@ The popup shows the five most recent local captures. Each item can be exported a
 ## Capture and privacy behavior
 
 - Captures a sanitized HTML subtree, a curated set of computed CSS properties for the root and descendants, a selector, viewport dimensions, bounding box, and timestamp, all on the current page and in local browser storage. The source URL omits credentials, query parameters, and fragments to reduce accidental leakage.
+- The popup offers an enabled-by-default checkbox to save a compressed JPEG of the current visible viewport. This preserves canvas and fixed-position backgrounds outside the selected DOM subtree. The screenshot can include other visible page content; uncheck it when that's not wanted. It is kept locally and included only when the user explicitly exports the Capture JSON. The screenshot covers the current viewport, not scrolled-off page sections.
 - Script and event arrays remain empty. Arbitrary page JavaScript cannot be reliably attributed to an element; script recording must be an explicit later action.
 - Removes script/style/iframe/object/embed/template nodes, hidden descendants (`hidden`, `aria-hidden`, `display:none`, and hidden visibility), inline event handlers, nonce/integrity attributes, and form control values. Review text and asset URLs before sharing because page content can still contain private information.
-- Caps the captured subtree at 300 elements, HTML at 2 MB, and computed CSS at 1 MB. Recent local captures are pruned to stay within an 8 MB storage budget.
+- Caps the captured subtree at 300 elements, HTML at 2 MB, computed CSS at 1 MB, and a JPEG viewport screenshot at 7 MiB. Recent local captures stay within an 8 MiB storage budget; if the screenshot would exceed it, the extension keeps the DOM/CSS capture and omits the screenshot.
 
 ## Manual checks
 
@@ -28,6 +29,7 @@ The popup shows the five most recent local captures. Each item can be exported a
 - Click **Export** on a recent item, confirm a JSON file downloads, and pass that file to `quarry package create`.
 - Click **Delete** and confirm the item disappears from the local list; no network request should occur.
 - Click **导入 Capture JSON**, select a previously exported file, and confirm it appears in Recent captures; malformed or oversized files should be rejected locally.
+- Capture a page with a canvas/fixed background, verify the saved item's details show the viewport image, export it, and confirm the JSON includes a `screenshot` data URL. Repeat with the checkbox disabled and confirm there is no screenshot field.
 
 Pages such as `chrome://` and the Chrome Web Store prohibit content-script injection. The popup reports the browser's error on those pages.
 

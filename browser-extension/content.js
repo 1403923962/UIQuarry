@@ -62,9 +62,16 @@
         event.stopImmediatePropagation();
         try {
           const capture = createCapture(node, metadata);
-          chrome.runtime.sendMessage({ type: "COMPONENT_CAPTURED", capture }, (result) => {
+          chrome.runtime.sendMessage({ type: "COMPONENT_CAPTURED", capture, includeScreenshot: metadata.includeScreenshot === true }, (result) => {
             const error = chrome.runtime.lastError;
-            showToast(error || !result?.ok ? `保存失败${result?.error ? `：${result.error}` : "，请重试"}` : "已保存到本机 UIQuarry 库");
+            const message = error || !result?.ok
+              ? `保存失败${result?.error ? `：${result.error}` : "，请重试"}`
+              : result.screenshotCaptured
+                ? "已保存到本机（含可视区域截图）"
+                : result.screenshotUnavailable
+                  ? "已保存 HTML/CSS；可视区域截图不可用"
+                  : "已保存到本机 UIQuarry 库";
+            showToast(message);
           });
           finish({ ok: true });
         } catch (error) {

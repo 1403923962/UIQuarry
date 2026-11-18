@@ -48,7 +48,12 @@
     },
     "viewport": {"$ref": "#/$defs/size"},
     "bounds": {"$ref": "#/$defs/rect"},
-    "screenshot": {"type": "string", "maxLength": 10000000, "description": "Optional data URL or package-relative path."},
+    "screenshot": {
+      "type": "string",
+      "maxLength": 10000000,
+      "pattern": "^data:image/(jpeg|png);base64,(?=.+$)(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$",
+      "description": "Optional JPEG or PNG data URL containing a screenshot of the current visible viewport. It preserves canvas, video, and other pixels outside the selected DOM subtree; it is not a full-page stitched screenshot."
+    },
     "notes": {"type": "string", "maxLength": 4000}
   },
   "$defs": {

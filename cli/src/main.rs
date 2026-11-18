@@ -15,6 +15,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 const MAX_CAPTURE_BYTES: u64 = 12 * 1024 * 1024;
+const MAX_SCREENSHOT_CHARS: usize = 10_000_000;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -190,6 +191,12 @@ fn validate_capture(value: &Value) -> Result<()> {
     if !(url.starts_with("http://") || url.starts_with("https://")) {
         bail!("capture sourceUrl must use http or https")
     }
+    if let Some(screenshot) = value.get("screenshot") {
+        let screenshot = screenshot
+            .as_str()
+            .ok_or_else(|| anyhow!("capture screenshot must be a data URL string"))?;
+        validate_screenshot_data_url(screenshot)?;
+    }
     if let Some(tags) = value.get("tags") {
         let tags = tags
             .as_array()
@@ -274,6 +281,43 @@ fn validate_capture(value: &Value) -> Result<()> {
         if bounds[field].as_f64().is_none_or(|n| !n.is_finite() || n < 0.0) {
             bail!("capture bounds needs non-negative {field}")
         }
+    }
+    Ok(())
+}
+
+fn validate_screenshot_data_url(value: &str) -> Result<()> {
+    if value.len() > MAX_SCREENSHOT_CHARS {
+        bail!("capture screenshot exceeds the 10 MB data URL limit")
+    }
+    let payload = value
+        .strip_prefix("data:image/png;base64,")
+        .or_else(|| value.strip_prefix("data:image/jpeg;base64,"))
+        .ok_or_else(|| anyhow!("capture screenshot must be a PNG or JPEG base64 data URL"))?;
+    let bytes = payload.as_bytes();
+    if bytes.is_empty() || bytes.len() % 4 != 0 {
+        bail!("capture screenshot contains invalid base64 data")
+    }
+
+    let padding = bytes.iter().rev().take_while(|byte| **byte == b'=').count();
+    if padding > 2 {
+        bail!("capture screenshot contains invalid base64 padding")
+    }
+    let data_len = bytes.len() - padding;
+    if bytes[..data_len]
+        .iter()
+        .any(|byte| !byte.is_ascii_alphanumeric() && *byte != b'+' && *byte != b'/')
+        || bytes[data_len..].iter().any(|byte| *byte != b'=')
+    {
+        bail!("capture screenshot contains invalid base64 data")
+    }
+    let expected_remainder = match padding {
+        0 => 0,
+        1 => 3,
+        2 => 2,
+        _ => unreachable!(),
+    };
+    if data_len % 4 != expected_remainder {
+        bail!("capture screenshot contains invalid base64 padding")
     }
     Ok(())
 }
@@ -698,5 +742,32 @@ mod tests {
         let mut value = capture();
         value.as_object_mut().unwrap().remove("tags");
         assert!(validate_capture(&value).is_ok());
+    }
+
+    #[test]
+    fn accepts_optional_png_or_jpeg_screenshot_data_urls() {
+        let mut value = capture();
+        value["screenshot"] = json!("data:image/jpeg;base64,/9j/2Q==");
+        assert!(validate_capture(&value).is_ok());
+
+        value["screenshot"] = json!("data:image/png;base64,iVBORw0KGgo=");
+        assert!(validate_capture(&value).is_ok());
+    }
+
+    #[test]
+    fn rejects_unsupported_malformed_or_oversized_screenshot_data_urls() {
+        let mut value = capture();
+        for screenshot in [
+            "data:image/gif;base64,R0lGODlh",
+            "data:image/png;base64,%%%",
+            "data:image/jpeg;base64,A===",
+            "https://example.com/screenshot.png",
+        ] {
+            value["screenshot"] = json!(screenshot);
+            assert!(validate_capture(&value).is_err(), "accepted {screenshot}");
+        }
+
+        value["screenshot"] = json!(format!("data:image/png;base64,{}", "A".repeat(MAX_SCREENSHOT_CHARS)));
+        assert!(validate_capture(&value).unwrap_err().to_string().contains("10 MB"));
     }
 }
