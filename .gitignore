@@ -1,0 +1,22 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# JavaScript / browser extension build output
+/node_modules/
+/dist/
+/build/
+
+# Local environment and databases
+.env
+.env.*
+!.env.example
+*.db
+*.sqlite
+*.sqlite3
+
+# Editor / OS files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
