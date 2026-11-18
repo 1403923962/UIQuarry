@@ -64,11 +64,11 @@
           const capture = createCapture(node, metadata);
           chrome.runtime.sendMessage({ type: "COMPONENT_CAPTURED", capture }, (result) => {
             const error = chrome.runtime.lastError;
-            showToast(error ? "保存失败，请重试" : "已保存到本机 UIQuarry 库");
+            showToast(error || !result?.ok ? `保存失败${result?.error ? `：${result.error}` : "，请重试"}` : "已保存到本机 UIQuarry 库");
           });
           finish({ ok: true });
         } catch (error) {
-          showToast(`Capture failed: ${error.message}`);
+          showToast(`捕获失败：${error.message}`);
           finish({ ok: false, error: error.message });
         }
       };
@@ -86,7 +86,7 @@
     const rect = root.getBoundingClientRect();
     const selector = selectorFor(root);
     const state = { cssRules: [], count: 0 };
-    const clone = cloneSanitized(root, state);
+    const clone = cloneSanitized(root, state, true);
     if (!clone) throw new Error("The selected element cannot be captured.");
     const html = clone.outerHTML;
     if (new TextEncoder().encode(html).byteLength > 2_000_000) throw new Error("Selected subtree exceeds 2 MB. Select a smaller component.");
@@ -97,7 +97,7 @@
       schemaVersion: 1,
       name: cleanText(metadata.name || root.getAttribute("aria-label") || root.tagName.toLowerCase(), 100),
       tags: Array.isArray(metadata.tags) ? metadata.tags.map((tag) => cleanText(tag, 40)).filter(Boolean).slice(0, 20) : [],
-      sourceUrl: location.href.slice(0, 2000),
+      sourceUrl: sanitizedSourceUrl(),
       capturedAt: new Date().toISOString(),
       selector,
       html,
@@ -112,9 +112,10 @@
 
   // Rebuild the tree recursively to keep each original element paired with the
   // corresponding sanitized clone, even when omitted nodes are removed.
-  function cloneSanitized(original, state) {
+  function cloneSanitized(original, state, isRoot = false) {
     if (original.nodeType === Node.TEXT_NODE) return document.createTextNode(original.textContent || "");
     if (original.nodeType !== Node.ELEMENT_NODE || OMIT_TAGS.has(original.tagName) || state.count >= 300) return null;
+    if (!isRoot && isHidden(original)) return null;
 
     const copy = original.cloneNode(false);
     const quarryId = `q${state.count++}`;
@@ -153,6 +154,21 @@
     } catch {
       return false;
     }
+  }
+
+  function sanitizedSourceUrl() {
+    const url = new URL(location.href);
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    return url.href.slice(0, 2000);
+  }
+
+  function isHidden(element) {
+    if (element.hidden || element.getAttribute("aria-hidden") === "true") return true;
+    const style = getComputedStyle(element);
+    return style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse";
   }
 
   function selectorFor(element) {

@@ -32,6 +32,7 @@ struct Manifest {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ManifestFile {
     path: String,
     sha256: String,
@@ -169,23 +170,109 @@ fn validate_capture(value: &Value) -> Result<()> {
     if !value.is_object() || value["schemaVersion"].as_u64() != Some(1) {
         bail!("capture must be a JSON object with schemaVersion 1")
     }
-    for field in ["name", "sourceUrl", "capturedAt", "selector", "html", "css"] {
+    for (field, max_chars) in [
+        ("name", 200),
+        ("sourceUrl", 2048),
+        ("capturedAt", 80),
+        ("selector", 2048),
+        ("html", 2_000_000),
+        ("css", 1_000_000),
+    ] {
         if !value[field].is_string() {
             bail!("capture field {field:?} must be a string")
+        }
+        let content = value[field].as_str().unwrap_or_default();
+        if content.chars().count() > max_chars || (field == "name" && content.trim().is_empty()) {
+            bail!("capture field {field:?} is empty or exceeds its character limit")
         }
     }
     let url = value["sourceUrl"].as_str().unwrap_or_default();
     if !(url.starts_with("http://") || url.starts_with("https://")) {
         bail!("capture sourceUrl must use http or https")
     }
-    for field in ["scripts", "events"] {
-        if !value[field].is_array() {
-            bail!("capture field {field:?} must be an array")
+    if let Some(tags) = value.get("tags") {
+        let tags = tags
+            .as_array()
+            .ok_or_else(|| anyhow!("capture tags must be an array"))?;
+        if tags.len() > 50 {
+            bail!("capture may contain at most 50 tags")
+        }
+        let mut seen_tags = HashSet::new();
+        for tag in tags {
+            let text = tag
+                .as_str()
+                .filter(|text| !text.is_empty() && text.chars().count() <= 64)
+                .ok_or_else(|| anyhow!("capture tags must be non-empty strings of at most 64 characters"))?;
+            if !seen_tags.insert(text) {
+                bail!("capture tags must be unique")
+            }
         }
     }
-    for field in ["viewport", "bounds"] {
-        if !value[field].is_object() {
-            bail!("capture field {field:?} must be an object")
+
+    let captured_at = value["capturedAt"].as_str().unwrap_or_default();
+    if chrono::DateTime::parse_from_rfc3339(captured_at).is_err() {
+        bail!("capture capturedAt must be an RFC 3339 timestamp")
+    }
+
+    if let Some(id) = value.get("id") {
+        let id = id.as_str().ok_or_else(|| anyhow!("capture id must be a string"))?;
+        validate_package_id(id)?;
+    }
+
+    let scripts = value["scripts"]
+        .as_array()
+        .ok_or_else(|| anyhow!("capture scripts must be an array"))?;
+    if scripts.len() > 100 {
+        bail!("capture may contain at most 100 script references")
+    }
+    for script in scripts {
+        let kind = script["kind"].as_str().unwrap_or_default();
+        if !matches!(kind, "inline" | "external" | "module" | "reference")
+            || script["source"]
+                .as_str()
+                .is_none_or(|source| source.chars().count() > 200_000)
+            || script["relation"]
+                .as_str()
+                .is_none_or(|relation| relation.chars().count() > 512)
+        {
+            bail!("capture script references need a supported kind, source, and relation")
+        }
+    }
+    let events = value["events"]
+        .as_array()
+        .ok_or_else(|| anyhow!("capture events must be an array"))?;
+    if events.len() > 1000 {
+        bail!("capture may contain at most 1000 interaction samples")
+    }
+    for event in events {
+        if event["type"].as_str().is_none_or(|text| text.chars().count() > 64)
+            || event["target"].as_str().is_none_or(|text| text.chars().count() > 2048)
+            || event["atMs"]
+                .as_f64()
+                .is_none_or(|number| !number.is_finite() || number < 0.0)
+        {
+            bail!("capture events require a type, target, and non-negative atMs")
+        }
+    }
+
+    let viewport = &value["viewport"];
+    if viewport["width"].as_f64().is_none_or(|n| !n.is_finite() || n < 0.0)
+        || viewport["height"].as_f64().is_none_or(|n| !n.is_finite() || n < 0.0)
+        || viewport
+            .get("deviceScaleFactor")
+            .is_some_and(|v| v.as_f64().is_none_or(|n| !n.is_finite() || n <= 0.0))
+    {
+        bail!("capture viewport needs non-negative width and height")
+    }
+    let bounds = &value["bounds"];
+    for field in ["x", "y"] {
+        if bounds[field].as_f64().is_none_or(|n| !n.is_finite()) {
+            bail!("capture bounds needs numeric {field}")
+        }
+    }
+    for field in ["width", "height"] {
+        if bounds[field].as_f64().is_none_or(|n| !n.is_finite() || n < 0.0) {
+            bail!("capture bounds needs non-negative {field}")
         }
     }
     Ok(())
@@ -212,7 +299,7 @@ fn validate_package(package_dir: &Path) -> Result<String> {
     validate_package_id(id)?;
     if manifest["name"]
         .as_str()
-        .filter(|name| !name.is_empty() && name.len() <= 200)
+        .filter(|name| !name.trim().is_empty() && name.chars().count() <= 200)
         .is_none()
     {
         bail!("package name must be a non-empty string no longer than 200 bytes")
@@ -228,11 +315,14 @@ fn validate_package(package_dir: &Path) -> Result<String> {
             bail!("package {field} must be a non-empty string")
         }
     }
+    if chrono::DateTime::parse_from_rfc3339(manifest["createdAt"].as_str().unwrap_or_default()).is_err() {
+        bail!("package createdAt must be an RFC 3339 timestamp")
+    }
     let files = manifest["files"]
         .as_array()
         .ok_or_else(|| anyhow!("package files must be an array"))?;
-    if files.is_empty() {
-        bail!("package must contain at least one payload file")
+    if files.is_empty() || files.len() > 10_000 {
+        bail!("package must contain between 1 and 10000 payload files")
     }
     let mut seen = HashSet::with_capacity(files.len());
     for entry in files {
@@ -270,6 +360,16 @@ fn validate_package(package_dir: &Path) -> Result<String> {
         }
         if sha256_file(&canonical)? != hash {
             bail!("SHA-256 mismatch for {path}")
+        }
+    }
+
+    if let Some(entrypoints) = manifest.get("entrypoints") {
+        let values = entrypoints
+            .as_array()
+            .ok_or_else(|| anyhow!("entrypoints must be an array"))?;
+        let listed: HashSet<&str> = values.iter().filter_map(Value::as_str).collect();
+        if listed.len() != values.len() || listed.iter().any(|path| !seen.contains(&path.to_lowercase())) {
+            bail!("each entrypoint must be a unique path listed in package files")
         }
     }
 
@@ -319,6 +419,17 @@ fn validate_package_id(id: &str) -> Result<()> {
             || !segment.as_bytes()[0].is_ascii_lowercase() && !segment.as_bytes()[0].is_ascii_digit()
         {
             bail!("package id must use lowercase ASCII letters, digits, '.', '_' or '-' in slash-separated segments")
+        }
+        let lower = segment.to_ascii_lowercase();
+        let base = lower.split('.').next().unwrap_or_default();
+        if segment.ends_with('.')
+            || matches!(base, "con" | "prn" | "aux" | "nul")
+            || ["com", "lpt"].iter().any(|prefix| {
+                base.strip_prefix(prefix)
+                    .is_some_and(|suffix| suffix.len() == 1 && suffix.as_bytes()[0].is_ascii_digit() && suffix != "0")
+            })
+        {
+            bail!("package id contains a Windows-reserved path segment")
         }
     }
     Ok(())
@@ -489,6 +600,11 @@ mod tests {
         let dir = tempdir().unwrap();
         let input = write_capture(dir.path());
         assert!(create_capture_package(&input, &dir.path().join("out"), "../outside").is_err());
+        for id in ["con", "demo/nul", "demo/com1", "demo/card."] {
+            assert!(
+                create_capture_package(&input, &dir.path().join(format!("out-{}", id.replace('/', "-"))), id).is_err()
+            );
+        }
         for path in ["../../outside", "C:/outside", "captures\\demo\\file.json", "a//b"] {
             assert!(validate_relative_path(path).is_err(), "accepted {path}");
         }
@@ -529,5 +645,58 @@ mod tests {
         });
         fs::write(package.join("quarry.json"), serde_json::to_vec(&manifest).unwrap()).unwrap();
         assert!(validate_package(&package).unwrap_err().to_string().contains("symlink"));
+    }
+
+    #[test]
+    fn preserves_unicode_names_and_emits_camel_case_media_type() {
+        let dir = tempdir().unwrap();
+        let input = write_capture(dir.path());
+        let mut value: Value = serde_json::from_slice(&fs::read(&input).unwrap()).unwrap();
+        value["name"] = json!("构石卡片组件");
+        fs::write(&input, serde_json::to_vec(&value).unwrap()).unwrap();
+        let package = dir.path().join("published");
+        create_capture_package(&input, &package, "demo/card").unwrap();
+        let manifest: Value = serde_json::from_slice(&fs::read(package.join("quarry.json")).unwrap()).unwrap();
+        assert_eq!(manifest["name"], "构石卡片组件");
+        assert_eq!(manifest["files"][0]["mediaType"], "application/json");
+        assert!(manifest["files"][0].get("media_type").is_none());
+    }
+
+    #[test]
+    fn rejects_entrypoints_not_covered_by_payload_hashes() {
+        let dir = tempdir().unwrap();
+        let package = dir.path().join("package");
+        fs::create_dir_all(&package).unwrap();
+        fs::write(package.join("index.js"), "export {};").unwrap();
+        let body = b"export {};";
+        let manifest = json!({
+            "schemaVersion": 1, "id": "demo/component", "name": "Component", "kind": "component",
+            "license": "MIT", "createdAt": "2026-11-19T00:00:00Z",
+            "files": [{"path": "index.js", "sha256": sha256_hex(body), "size": body.len()}],
+            "entrypoints": ["missing.js"]
+        });
+        fs::write(package.join("quarry.json"), serde_json::to_vec(&manifest).unwrap()).unwrap();
+        assert!(validate_package(&package)
+            .unwrap_err()
+            .to_string()
+            .contains("entrypoint"));
+    }
+
+    #[test]
+    fn rejects_invalid_capture_dimensions_and_timestamp() {
+        let mut value = capture();
+        value["capturedAt"] = json!("yesterday");
+        assert!(validate_capture(&value).unwrap_err().to_string().contains("capturedAt"));
+
+        value = capture();
+        value["bounds"]["width"] = json!(-1);
+        assert!(validate_capture(&value).unwrap_err().to_string().contains("width"));
+    }
+
+    #[test]
+    fn accepts_capture_without_optional_tags() {
+        let mut value = capture();
+        value.as_object_mut().unwrap().remove("tags");
+        assert!(validate_capture(&value).is_ok());
     }
 }

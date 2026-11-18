@@ -41,6 +41,7 @@ CLI 使用说明见 [cli/README.md](cli/README.md)，捕获、Git 包和设计�
 ```powershell
 cargo test --manifest-path cli/Cargo.toml
 cargo clippy --manifest-path cli/Cargo.toml --all-targets -- -D warnings
+node --test tests/browser-extension-storage.test.mjs
 ```
 
 浏览器扩展目前还需要在 Chrome 中手动完成界面/页面交互验收；尚未实现脚本导入界面或设计画布。付费网页和云端功能不在这个公开仓库中。
