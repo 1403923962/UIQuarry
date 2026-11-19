@@ -4,14 +4,21 @@ const MAX_IMPORTED_BYTES = MAX_LOCAL_BYTES;
 const MAX_SCREENSHOT_CHARS = 7 * 1024 * 1024;
 const MAX_COMPOSITE_CHARS = 3_000_000;
 const MAX_RECORDING_CHARS = 3_000_000;
+let storageWriteQueue = Promise.resolve();
+
+function enqueueStorageWrite(operation) {
+  const next = storageWriteQueue.then(operation, operation);
+  storageWriteQueue = next.catch(() => {});
+  return next;
+}
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "COMPONENT_CAPTURED" && message.capture) {
-    saveCapture(message.capture, {
+    enqueueStorageWrite(() => saveCapture(message.capture, {
       sender,
       includeScreenshot: message.includeScreenshot === true,
       includeComposite: message.includeComposite === true
-    }).then(sendResponse).catch((error) => {
+    })).then(sendResponse).catch((error) => {
       console.error("UIQuarry local save failed", error);
       sendResponse({ ok: false, error: "本地保存失败" });
     });
@@ -22,11 +29,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (message?.type === "DELETE_CAPTURE" && typeof message.localId === "string") {
-    deleteCapture(message.localId).then(sendResponse).catch(() => sendResponse({ ok: false, error: "本地删除失败" }));
+    enqueueStorageWrite(() => deleteCapture(message.localId)).then(sendResponse).catch(() => sendResponse({ ok: false, error: "本地删除失败" }));
     return true;
   }
   if (message?.type === "IMPORT_CAPTURE" && message.capture) {
-    importCapture(message.capture).then(sendResponse).catch(() => sendResponse({ ok: false, error: "本地导入失败" }));
+    enqueueStorageWrite(() => importCapture(message.capture)).then(sendResponse).catch(() => sendResponse({ ok: false, error: "本地导入失败" }));
     return true;
   }
 });
@@ -102,7 +109,7 @@ async function saveCapture(capture, options = {}) {
       if (!(await canvasBitmapHasVisiblePixels(storedCapture.canvasBitmap))) {
         delete storedCapture.canvasBitmap;
         canvasBitmapUnavailable = true;
-        addCaptureNote(storedCapture, "Canvas 导出的像素全透明（WebGL drawing buffer 可能在上屏后已清除）。启用本站 WebGL 保帧并刷新后可重试；也可选合成裁切或录制画布。");
+        addCaptureNote(storedCapture, "Canvas 导出的像素全透明（可能是透明画布，或 WebGL drawing buffer 在上屏后已清除）。可启用本站 WebGL 保帧并刷新后重试，也可选合成裁切或录制画布。");
       }
     } catch (error) {
       console.warn("UIQuarry canvas pixel validation unavailable", error);

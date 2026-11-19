@@ -116,7 +116,6 @@ function showDetails(capture) {
   } else if (capture.notes?.startsWith?.("仅保存画布元素和样式。")) {
     fields.push(["画布状态", capture.notes]);
   }
-  for (const [label, value] of fields) { const term = document.createElement("dt"); term.textContent = label; const description = document.createElement("dd"); description.textContent = value; description.title = value; list.append(term, description); }
   $("details-preview").textContent = capture.html || "没有 HTML 预览";
   const screenshot = $("details-shot");
   screenshot.hidden = typeof capture.screenshot !== "string";
@@ -149,6 +148,15 @@ function showDetails(capture) {
         $("status").textContent = "已开始导出画布 WebM。";
       } catch (error) { $("status").textContent = `导出失败：${error.message}`; }
     };
+  }
+  list.replaceChildren();
+  for (const [label, value] of fields) {
+    const term = document.createElement("dt");
+    term.textContent = label;
+    const description = document.createElement("dd");
+    description.textContent = value;
+    description.title = value;
+    list.append(term, description);
   }
   $("details").hidden = false;
 }

@@ -69,6 +69,18 @@ test("capture saves locally and delete removes only the requested record", async
   assert.equal(app.captures.length, 0);
 });
 
+test("serialized local writes prevent concurrent captures from overwriting each other", async () => {
+  const app = createHarness();
+  const results = await Promise.all([
+    app.send({ type: "COMPONENT_CAPTURED", capture: capture({ name: "一" }) }),
+    app.send({ type: "COMPONENT_CAPTURED", capture: capture({ name: "二" }) }),
+    app.send({ type: "COMPONENT_CAPTURED", capture: capture({ name: "三" }) })
+  ]);
+  assert.ok(results.every(result => result.ok));
+  assert.equal(app.captures.length, 3);
+  assert.deepEqual(new Set(app.captures.map(item => item.name)), new Set(["一", "二", "三"]));
+});
+
 test("Capture JSON import validates v1 and strips old local/server identity", async () => {
   const app = createHarness();
   const input = capture({ id: "old-id", createdAt: "old-time", localId: "old-local", savedAt: "old-save", sync: "synced" });
@@ -207,7 +219,7 @@ test("transparent WebGL frame is omitted and recommends the site retention setti
   assert.equal(result.ok, true);
   assert.equal(result.canvasBitmapUnavailable, true);
   assert.equal(app.captures[0].canvasBitmap, undefined);
-  assert.match(app.captures[0].notes, /全透明.*WebGL drawing buffer/);
+  assert.match(app.captures[0].notes, /全透明.*透明画布.*WebGL drawing buffer/);
 });
 
 test("keeps DOM/CSS when a combined screenshot would exceed the local storage budget", async () => {
