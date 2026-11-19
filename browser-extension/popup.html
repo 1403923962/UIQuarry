@@ -22,6 +22,7 @@
     <p class="privacy-note">录制时保持页面可见。WebGL 黑帧时，请先为该站启用保帧并刷新。</p>
     <button id="start" type="button"><span aria-hidden="true">⌖</span> 选择网页元素 / Canvas</button>
     <button id="import" class="secondary" type="button">导入 Capture JSON</button>
+    <button id="export-latest-package" class="secondary" type="button">导出最近捕获为 Git 包</button>
     <input id="import-file" type="file" accept="application/json,.json" hidden>
     <section class="webgl-settings" aria-labelledby="webgl-heading">
       <h2 id="webgl-heading">WebGL 保帧</h2>
@@ -31,12 +32,24 @@
     </section>
     <p id="status" role="status">采集内容只保存在本浏览器，不会自动上传。</p>
     <section aria-labelledby="recent-heading">
-      <h2 id="recent-heading">最近捕获</h2>
+      <div class="library-heading"><h2 id="recent-heading">本地捕获库</h2><span id="library-usage" aria-live="polite">读取存储占用…</span></div>
+      <label class="visually-hidden" for="library-search">搜索本地捕获</label>
+      <input id="library-search" type="search" placeholder="搜索名称、来源、选择器或标签" autocomplete="off">
+      <div class="library-filters">
+        <label class="visually-hidden" for="domain-filter">按来源域名筛选</label>
+        <select id="domain-filter" aria-label="按来源域名筛选"><option value="">所有来源</option></select>
+        <label class="visually-hidden" for="tag-filter">按标签筛选</label>
+        <select id="tag-filter" aria-label="按标签筛选"><option value="">所有标签</option></select>
+      </div>
+      <p id="library-summary" class="library-summary" aria-live="polite"></p>
       <ul id="recent"></ul>
     </section>
     <section id="details" class="details" aria-labelledby="details-heading" hidden>
       <div class="details-header"><h2 id="details-heading">组件详情</h2><button id="close-details" class="close-details" type="button" aria-label="关闭详情">×</button></div>
       <dl id="details-list"></dl>
+      <p id="details-notes" class="details-notes" hidden></p>
+      <p id="details-warnings" class="details-warnings" role="note"></p>
+      <button type="button" id="export-package-selected" class="secondary">导出 Git 组件包 ZIP</button>
       <figure id="canvas-frame" hidden>
         <figcaption>画布原始像素 · PNG</figcaption>
         <img id="canvas-image" alt="选中的画布当前帧">
@@ -62,6 +75,8 @@
     <p class="hint">滚动找到目标，左键定点。滚轮或 ↑↓ 切层，C 直达画布；录制结束后保存。Esc 重选位置。</p>
   </main>
   <script src="popup-webgl.js"></script>
+  <script src="privacy-review.js"></script>
+  <script src="package-zip.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

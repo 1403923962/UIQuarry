@@ -5,7 +5,7 @@ import vm from "node:vm";
 
 const source = await readFile(new URL("../browser-extension/popup.js", import.meta.url), "utf8");
 
-function harness({ captures = [] } = {}) {
+function harness({ captures = [], reviewResult = undefined } = {}) {
   const elements = new Map();
   const events = new Map();
   const createdEvents = new WeakMap();
@@ -23,7 +23,7 @@ function harness({ captures = [] } = {}) {
     elements.set(id, value);
     return value;
   };
-  ["start", "import", "import-file", "name", "tags", "target-selector", "include-animations", "include-screenshot", "include-composite", "record-animation", "status", "close-details", "details", "details-list", "details-preview", "details-shot", "canvas-frame", "canvas-image", "export-canvas", "composite-frame", "composite-image", "export-composite", "recording-frame", "recording-video", "export-recording", "animations-frame", "animations-preview", "animations-summary", "recent"].forEach(make);
+  ["start", "import", "import-file", "name", "tags", "target-selector", "include-animations", "include-screenshot", "include-composite", "record-animation", "status", "close-details", "details", "details-list", "details-preview", "details-shot", "canvas-frame", "canvas-image", "export-canvas", "composite-frame", "composite-image", "export-composite", "recording-frame", "recording-video", "export-recording", "animations-frame", "animations-preview", "animations-summary", "recent", "library-search", "domain-filter", "tag-filter", "library-summary", "library-usage", "details-notes", "details-warnings", "export-package-selected", "export-latest-package"].forEach(make);
   elements.get("name").value = "Integration";
   elements.get("tags").value = "card, demo";
   elements.get("target-selector").value = "canvas#demo";
@@ -33,13 +33,14 @@ function harness({ captures = [] } = {}) {
   elements.get("include-animations").checked = true;
 
   const calls = [];
+  let packageDownloads = 0;
   const chrome = {
     tabs: {
       query: async () => [{ id: 19 }],
       sendMessage: async (_id, message) => { calls.push(["picker", message]); return { ok: true }; },
     },
     scripting: { executeScript: async args => calls.push(["inject", args]) },
-    runtime: { sendMessage: (message, callback) => callback({ captures }) },
+    runtime: { sendMessage: (message, callback) => callback({ captures, storageBytes: 2048 }) },
     downloads: { download: async () => 1 },
   };
   const document = {
@@ -51,8 +52,13 @@ function harness({ captures = [] } = {}) {
       return value;
     },
   };
-  vm.runInNewContext(source, { chrome, document, URL, Blob, TextEncoder, Date, JSON, Promise, console, setTimeout, clearTimeout, atob, btoa, window: { close() {} } });
-  return { elements, events, calls };
+  vm.runInNewContext(source, {
+    chrome, document, URL, Blob, TextEncoder, Date, JSON, Promise, console, setTimeout, clearTimeout, atob, btoa,
+    UIQuarryPrivacyReview: { reviewExport: async () => reviewResult ?? null, manifestMetadata: () => ({ license: "MIT" }) },
+    UIQuarryPackageExport: { download: async () => { packageDownloads += 1; } },
+    window: { close() {} }
+  });
+  return { elements, events, calls, get packageDownloads() { return packageDownloads; } };
 }
 
 test("popup forwards all local media options into the picker start message", async () => {
@@ -93,4 +99,30 @@ test("popup details show captured DOM animation observation metadata", () => {
   assert.match(app.elements.get("animations-summary").textContent, /1 条.*不含动画实现代码/);
   assert.match(app.elements.get("animations-preview").textContent, /CSSTransition/);
   assert.match(app.elements.get("animations-preview").textContent, /"opacity": 0/);
+});
+
+test("popup local library filters by search text and reports storage usage", () => {
+  const first = { name: "Card", sourceUrl: "https://example.test/", selector: "#card", capturedAt: "2026-11-19T12:00:00.000Z", tags: ["card"], html: "<div></div>", animations: [], scripts: [], events: [] };
+  const second = { name: "Nav", sourceUrl: "https://other.test/", selector: "nav", capturedAt: "2026-11-19T12:01:00.000Z", tags: ["navigation"], html: "<nav></nav>", animations: [], scripts: [], events: [] };
+  const app = harness({ captures: [first, second] });
+  assert.equal(app.elements.get("library-usage").textContent, "2.0 KiB / 8 MiB");
+  assert.match(app.elements.get("library-summary").textContent, /显示 2 \/ 2 条捕获/);
+  app.elements.get("library-search").value = "nav";
+  app.events.get("library-search:input")();
+  assert.equal(app.elements.get("recent").children.length, 1);
+  assert.equal(app.elements.get("recent").children[0].children[0].children[0].textContent, "Nav");
+  app.elements.get("library-search").value = "";
+  app.elements.get("domain-filter").value = "example.test";
+  app.events.get("domain-filter:change")();
+  assert.equal(app.elements.get("recent").children.length, 1);
+  assert.equal(app.elements.get("recent").children[0].children[0].children[0].textContent, "Card");
+});
+
+test("popup does not start an export when the sharing review is cancelled", async () => {
+  const capture = { name: "Card", sourceUrl: "https://example.test/", selector: "#card", capturedAt: "2026-11-19T12:00:00.000Z", html: "<div></div>", scripts: [], events: [] };
+  const app = harness({ captures: [capture], reviewResult: null });
+  const actions = app.elements.get("recent").children[0].children[1].children;
+  await actions[1].click();
+  assert.equal(app.packageDownloads, 0);
+  assert.equal(app.elements.get("status").textContent, "");
 });

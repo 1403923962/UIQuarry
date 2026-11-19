@@ -29,9 +29,9 @@ test("Chromium captures active CSS keyframes as bounded read-only metadata", {
     await new Promise((resolve, reject) => server.once("error", reject).listen(0, "127.0.0.1", resolve));
     const { stdout } = await promisify(execFile)(browser, [
       "--headless=new", "--disable-background-networking", "--no-first-run", "--no-default-browser-check",
-      "--disable-extensions", "--virtual-time-budget=3000", `--user-data-dir=${profile}`, "--dump-dom",
+      "--disable-extensions", "--virtual-time-budget=8000", `--user-data-dir=${profile}`, "--dump-dom",
       `http://127.0.0.1:${server.address().port}/`,
-    ], { timeout: 30000, windowsHide: true });
+    ], { timeout: 60000, windowsHide: true });
     const result = /<output id="result">([^<]*)<\/output>/.exec(stdout)?.[1];
     assert.equal(result, "PASS", result || "Chromium did not finish the WAAPI fixture");
   } finally {

@@ -14,7 +14,7 @@ This release requires Chrome/Edge 113 or later for the local storage budget used
 
 If you know the element's selector, enter it in **精确定位** before starting (for example, `canvas#bg-canvas`). A unique match stays selected as the pointer moves. Selecting a canvas saves the current frame as a PNG using its backing resolution. Open **详情 → 导出画布 PNG** to download it. Cross-origin canvas restrictions and encoding limits can leave pixel data unavailable. In that case the saved record includes the reason. Document lookup currently targets the main document.
 
-The popup shows the five most recent local captures. Each item can be exported as a clean Capture v1 JSON file or deleted from this browser. Capture records are in the extension's local storage under `captures`; exported JSON intentionally omits local bookkeeping fields so it can be passed to the offline CLI.
+The popup shows the local capture library. Search by name, source URL, selector, or tag, and narrow results by source domain or tag. Each item can be previewed, exported as a clean Capture v1 JSON file or Git component ZIP, or deleted from this browser. The library header reports approximate local storage used against the 8 MiB budget. Capture records are in the extension's local storage under `captures`; exported files intentionally omit local bookkeeping fields so they can be passed to the offline CLI.
 
 ## Capture and privacy behavior
 
@@ -37,6 +37,10 @@ WebGL retention is off by default. Enable it for a specific site from the popup;
 - Inspect the extension's service worker network panel while capturing; no upload request should be made.
 - Export a stored capture manually through the offline CLI when you want to create a Git package.
 - Click **Export** on a recent item, confirm a JSON file downloads, and pass that file to `quarry package create`.
+- Use the local library search and source/tag filters; confirm the result count and storage usage update without a network request. Open **详情** and confirm media badges, previews, source metadata, notes, and privacy warnings are shown.
+- Open a capture's details and click **导出 Git 组件包 ZIP**; confirm the ZIP contains `quarry.json`, a capture entry, SHA-256 file metadata, and any selected media files.
+- Before exporting a Capture JSON or Git package, confirm the local sharing review shows the source URL/domain, privacy and redistribution warning, and license selector. The export must stay disabled until **我已检查来源内容、个人数据和再分发权利** is checked. Cancel the review and confirm no file is downloaded. The selected license and source review are written only to the package manifest where the format allows; local captures stay unchanged.
+- Choose **其他（自定义）** once, enter a short license note, and confirm it is included in the exported package metadata. Verify no network request is made while the review or export runs.
 - Click **Delete** and confirm the item disappears from the local list; no network request should occur.
 - Click **导入 Capture JSON**, select a previously exported file, and confirm it appears in Recent captures; malformed or oversized files should be rejected locally.
 - Capture a CSS animation with **CSS/WAAPI animation metadata** enabled; Details should show keyframes/timing linked to a captured node ID, while scripts/events stay separate.

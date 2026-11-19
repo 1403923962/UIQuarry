@@ -25,7 +25,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (message?.type === "GET_RECENT") {
-    chrome.storage.local.get({ captures: [] }).then(({ captures }) => sendResponse({ captures })).catch(() => sendResponse({ captures: [] }));
+    chrome.storage.local.get({ captures: [] }).then(({ captures }) => sendResponse({ captures, storageBytes: storageBytes(captures) })).catch(() => sendResponse({ captures: [], storageBytes: 0 }));
     return true;
   }
   if (message?.type === "DELETE_CAPTURE" && typeof message.localId === "string") {
