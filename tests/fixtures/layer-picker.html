@@ -30,7 +30,12 @@
   );
   const keyboard = key => document.dispatchEvent(new KeyboardEvent("keydown", {key, bubbles: true, cancelable: true}));
   function point(type, x = 24, y = 24) {
-    document.elementFromPoint(x, y).dispatchEvent(new MouseEvent(type, {clientX: x, clientY: y, bubbles: true, cancelable: true}));
+    return document.elementFromPoint(x, y).dispatchEvent(new MouseEvent(type, {clientX: x, clientY: y, bubbles: true, cancelable: true}));
+  }
+  function wheel(deltaY, options = {}) {
+    const event = new WheelEvent("wheel", {clientX: 24, clientY: 24, deltaY, bubbles: true, cancelable: true, ...options});
+    document.elementFromPoint(event.clientX, event.clientY).dispatchEvent(event);
+    return event.defaultPrevented;
   }
   function check(value, explanation) { if (!value) throw Error(explanation); }
 
@@ -45,22 +50,29 @@
     check(document.elementFromPoint(24, 24).id === "button", "browser must hit the foreground button");
     check(!document.elementsFromPoint(24, 24).includes(canvas), "test canvas must be absent from native pointer targets");
 
+    let pageClicks = 0;
+    document.querySelector("#button").addEventListener("click", () => pageClicks++);
     check((await start()).ok, "picker did not start");
     point("mousemove");
+    check(!wheel(100), "before pinning, the page owns wheel scrolling");
+    check(keyboard("ArrowDown"), "before pinning, arrows should reach the page");
+    check(!point("click") && messages.length === 0 && pageClicks === 0, "first click must only pin and suppress the underlying button");
     point("click");
-    check(messages.at(-1)?.capture.selector === "#button", "normal click lost the foreground button");
+    check(messages.at(-1)?.capture.selector === "#button" && pageClicks === 0, "second click should save the foreground button without activating it");
 
     await start();
     point("mousemove");
+    point("click");
     keyboard("]");
     keyboard("Enter");
     check(messages.at(-1)?.capture.selector === "#front", "next layer did not select the containing section");
 
     await start();
     point("mousemove");
+    point("click");
     keyboard("c");
-    point("mousemove", 25, 24);
-    point("click", 25, 24);
+    point("mousemove", 350, 250);
+    point("click", 350, 250);
     const capture = messages.at(-1);
     check(capture.capture.selector === "#bg-canvas", "click replaced the selected canvas with its foreground");
     check(capture.includeScreenshot !== true, "canvas selection requested a viewport screenshot");
@@ -70,18 +82,49 @@
 
     await start("#bg-canvas");
     point("mousemove");
+    check(!wheel(100), "exact selector should leave scrolling to the page");
     keyboard("Enter");
     check(messages.at(-1)?.capture.selector === "#bg-canvas" && messages.length === 4, "exact selector lost on hover or Enter");
     for (const selector of ["#missing", "section,button", ".["]) {
       check((await start(selector)).ok === false, "invalid, missing or ambiguous selector should not start: " + selector);
     }
     await start();
-    point("mousemove");
-    keyboard("c");
-    keyboard("Escape");
     point("click");
-    check(messages.length === 4, "cancelled picker saved a capture");
-    check(!document.querySelector("[data-uiquarry-overlay]"), "picker left an overlay after cancellation");
+    point("mousemove", 350, 250);
+    check(wheel(100, {clientX: 350, clientY: 250}), "wheel away from the pin should cycle its layers");
+    keyboard("ArrowDown");
+    point("click", 350, 250);
+    check(messages.at(-1).capture.selector === "#bg-canvas", "wheel and Down should advance the same selection");
+
+    await start();
+    point("click");
+    keyboard("c");
+    check(wheel(-100), "upward wheel should select the preceding layer");
+    keyboard("Enter");
+    check(messages.at(-1).capture.selector === "#front", "wheel-up after choosing canvas should return to the containing section");
+
+    await start();
+    point("click");
+    for (const modifier of ["ctrlKey", "metaKey", "shiftKey", "altKey"]) {
+      check(!wheel(100, {[modifier]: true}), "modified wheel was consumed: " + modifier);
+    }
+    check(!wheel(0, {deltaX: 100}), "horizontal wheel should reach the page");
+    keyboard("Escape");
+    check(!wheel(100), "releasing the pin should restore scrolling");
+    const count = messages.length;
+    point("click", 350, 250);
+    check(messages.length === count, "new position should be pinned without saving");
+    check(wheel(100, {clientX: 350, clientY: 250}), "even a single pinned layer should keep the page still");
+    keyboard("Enter");
+    check(messages.at(-1).capture.selector === "#bg-canvas", "repinning must hit the new point");
+    await start();
+    point("click");
+    keyboard("Escape");
+    keyboard("Escape");
+    check(!document.querySelector("[data-uiquarry-overlay]"), "second Esc should exit after releasing the pin");
+    check(!wheel(100), "wheel listener survived cancellation");
+    check(point("click") && pageClicks === 1, "cancelled picker must restore normal page clicks");
+    check(messages.length === count + 1, "cancelled picker saved a capture");
   }
   run().then(() => { document.querySelector("#result").textContent = "PASS"; })
        .catch(error => { document.querySelector("#result").textContent = "FAIL: " + error.message; });

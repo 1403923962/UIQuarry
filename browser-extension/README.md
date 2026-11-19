@@ -8,7 +8,7 @@ Chrome Manifest V3 prototype for choosing and archiving a page element. It store
 2. Select **Load unpacked** and choose this `browser-extension` directory.
 3. Open a normal web page, then click the UIQuarry toolbar icon.
 4. Enter a component name and optional comma-separated tags, then click **Pick an element**.
-5. Hover to inspect the top element. Use **↑/↓** to cycle through overlapping elements or **C** to select a canvas at that point, including pointer-transparent backgrounds. Click or press **Enter** to save the highlighted element. **Esc** cancels.
+5. Scroll the page to find the target and left-click to pin that position. Scroll down or press **↓** to select the next layer underneath. Scroll up or press **↑** to go back. **C** selects a canvas at the pinned point, including pointer-transparent backgrounds. Click again or press **Enter** to save. **Esc** releases the pin and restores page scrolling. Press **Esc** again to exit.
 
 If you know the element's selector, enter it in **精确定位** before starting (for example, `canvas#bg-canvas`). A unique match stays selected as the pointer moves. Selecting a canvas saves the current frame as a PNG using its backing resolution. Open **详情 → 导出画布 PNG** to download it. Cross-origin canvas restrictions and encoding limits can leave pixel data unavailable. In that case the saved record includes the reason. Document lookup currently targets the main document.
 
@@ -25,7 +25,7 @@ The popup shows the five most recent local captures. Each item can be exported a
 ## Manual checks
 
 - Load the unpacked extension and capture a card/button from a page; confirm the selector and styles appear in local storage.
-- Press `Esc` while the picker is active; the page should return to normal without a capture.
+- Pin a point, move the pointer and roll the wheel. Only the layers at the pinned point should cycle. Press `Esc` to pick another point, then `Esc` to exit.
 - Inspect the extension's service worker network panel while capturing; no upload request should be made.
 - Export a stored capture manually through the offline CLI when you want to create a Git package.
 - Click **Export** on a recent item, confirm a JSON file downloads, and pass that file to `quarry package create`.

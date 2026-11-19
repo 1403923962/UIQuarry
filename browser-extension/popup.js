@@ -37,7 +37,7 @@ startButton.addEventListener("click", async () => {
       includeScreenshot: $("include-screenshot").checked
     });
     if (!reply?.ok) throw new Error(reply?.error || "无法打开元素选择器。");
-    $("status").textContent = "悬停查看元素，点击完成捕获；按 Esc 取消。";
+    $("status").textContent = "选择器已开启。";
     window.close();
   } catch (error) {
     $("status").textContent = `无法开始：${error.message}`;

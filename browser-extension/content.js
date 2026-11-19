@@ -76,9 +76,11 @@
     const controller = new AbortController();
     const options = { capture: true, signal: controller.signal };
     let point = null;
+    let pinned = false;
     let layers = locked ? [locked] : [];
     let index = 0;
-    let cycled = false;
+    let wheelPixels = 0;
+    let lastWheelTime = 0;
 
     function finish() {
       controller.abort();
@@ -97,14 +99,18 @@
       const rect = node.getBoundingClientRect();
       Object.assign(overlay.style, { left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.width}px`, height: `${rect.height}px` });
       const target = node.localName + (node.id ? "#" + node.id : "");
-      const controls = locked ? "选择器已锁定" : `第 ${index + 1}/${layers.length} 层 · ↑↓ 切层 · C 选画布`;
-      hint.textContent = `${target} · ${controls} · 点击或 Enter 确认 · Esc 取消`;
+      if (locked) {
+        hint.textContent = `${target} · 选择器已锁定 · 点击或 Enter 保存 · Esc 退出`;
+      } else if (pinned) {
+        hint.textContent = `${target} · 已定点 · 第 ${index + 1}/${layers.length} 层 · 滚轮/↑↓ 切层 · C 选画布 · 点击或 Enter 保存 · Esc 重选`;
+      } else {
+        hint.textContent = `${target} · 左键定点 · 滚轮翻页 · Esc 退出`;
+      }
     }
 
     function refresh(x, y) {
       point = { x, y };
-      if (!locked) {
-        const current = layers[index];
+      if (!locked && !pinned) {
         const hits = document.elementsFromPoint(x, y).filter(node => node !== overlay && node !== hint && canPick(node));
         const candidates = new Set(hits);
         // Native hit testing omits pointer-transparent canvases, including fixed backgrounds.
@@ -114,10 +120,28 @@
           if (x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom && isRendered(canvas)) candidates.add(canvas);
         }
         layers = [...candidates];
-        index = cycled ? layers.indexOf(current) : 0;
-        if (index < 0) { index = 0; cycled = false; }
+        index = 0;
       }
       redraw();
+    }
+
+    function cycleLayer(direction) {
+      index = (index + direction + layers.length) % layers.length;
+      redraw();
+    }
+
+    function pin() {
+      if (!layers.length) return;
+      pinned = true;
+      wheelPixels = 0;
+      document.addEventListener("wheel", onPinnedWheel, { ...options, passive: false });
+      redraw();
+    }
+
+    function unpin() {
+      pinned = false;
+      document.removeEventListener("wheel", onPinnedWheel, true);
+      refresh(point.x, point.y);
     }
 
     function confirm() {
@@ -147,17 +171,40 @@
     }
 
     const onViewportChange = () => {
-      if (point) refresh(point.x, point.y);
+      if (point && !pinned && !locked) refresh(point.x, point.y);
       else redraw();
     };
-    document.addEventListener("mousemove", event => refresh(event.clientX, event.clientY), options);
-    document.addEventListener("click", event => {
+    document.addEventListener("mousemove", event => {
+      if (pinned) point = { x: event.clientX, y: event.clientY };
+      else if (!locked) refresh(event.clientX, event.clientY);
+    }, options);
+    function onPinnedWheel(event) {
+      if (!event.cancelable || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey ||
+          Math.abs(event.deltaY) <= Math.abs(event.deltaX)) {
+        wheelPixels = 0;
+        return;
+      }
       event.preventDefault();
       event.stopImmediatePropagation();
-      const targetBeforeClick = cycled ? layers[index] : null;
-      refresh(event.clientX, event.clientY);
-      if (targetBeforeClick && targetBeforeClick !== layers[index]) {
-        hint.textContent = "原图层已移走，请重新选择并确认。";
+      if (layers.length < 2) return;
+      const direction = Math.sign(event.deltaY);
+      if (event.deltaMode === WheelEvent.DOM_DELTA_PIXEL) {
+        // Trackpads often send a stream of tiny deltas for one movement.
+        if (event.timeStamp - lastWheelTime > 200 || Math.sign(wheelPixels) !== direction) wheelPixels = 0;
+        lastWheelTime = event.timeStamp;
+        wheelPixels += event.deltaY;
+        if (Math.abs(wheelPixels) < 32) return;
+      }
+      wheelPixels = 0;
+      cycleLayer(direction);
+    }
+    document.addEventListener("click", event => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (!locked && !pinned) {
+        refresh(event.clientX, event.clientY);
+        pin();
         return;
       }
       confirm();
@@ -166,11 +213,18 @@
       if (event.altKey || event.ctrlKey || event.metaKey || event.isComposing) return;
       const key = event.key.toLowerCase();
       if (!["escape", "enter", "arrowup", "arrowdown", "[", "]", "c"].includes(key)) return;
+      if (!pinned && key !== "escape" && key !== "enter") return;
       event.preventDefault();
       event.stopImmediatePropagation();
-      if (key === "escape") { finish(); return; }
-      if (key === "enter") { confirm(); return; }
-      if (locked || !layers.length) return;
+      if (key === "escape") {
+        if (!event.repeat) { if (pinned) unpin(); else finish(); }
+        return;
+      }
+      if (key === "enter") {
+        if (!event.repeat) { if (locked || pinned) confirm(); else pin(); }
+        return;
+      }
+      wheelPixels = 0;
       if (key === "c") {
         if (!layers.some(node => node.localName === "canvas")) {
           hint.textContent = "此处没有可选画布，请移动到画布上方。";
@@ -178,12 +232,11 @@
         }
         for (let i = 1; i <= layers.length; i++) {
           const next = (index + i) % layers.length;
-          if (layers[next].localName === "canvas") { index = next; cycled = true; break; }
+          if (layers[next].localName === "canvas") { index = next; break; }
         }
       } else {
-        const step = key === "arrowup" || key === "[" ? -1 : 1;
-        index = (index + step + layers.length) % layers.length;
-        cycled = true;
+        cycleLayer(key === "arrowup" || key === "[" ? -1 : 1);
+        return;
       }
       redraw();
     }, options);
