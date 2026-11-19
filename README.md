@@ -7,7 +7,7 @@ UIQuarry public 是一个 GPL-3.0 开源的浏览器本地工具：选取网页�
 ## 产品边界
 
 - **浏览器本地采集**：扩展选中页面元素，记录经净化的 HTML、元素样式、尺寸和来源，全部保存在浏览器本机。它是参考快照，不假设能从任意网页完整还原 JSX、私有脚本或原始设计稿。
-- **Canvas/背景补捉**：可选保存当前可视区域截图，把 DOM 子树之外的 canvas 和固定背景带入参考档案；截图仅本地保存，随用户主动导出。
+- **背景 Canvas**：在“精确定位”输入唯一的 CSS 选择器（如 `#bg-canvas`），或者悬停后按 `C` 选中鼠标下方的画布。按 Enter 确认后，“详情”可预览并导出该画布的一帧 PNG。需要保留前后图层的合成效果时，可另外勾选可视区域截图。
 - **离线组件包**：CLI 创建带 `quarry.json` 清单的普通 Git 文件包。开发者可以自行提交、克隆、fork、分支、合并和分享。
 - **公开格式**：`spec/` 定义捕获、组件包和受约束设计模型的公开格式，供私有产品或第三方工具消费。
 - **付费网页产品**：网页工作台、云端存储/检索、团队权限、计费、AI 上下文和设计编辑器均在私有仓库中维护，必须由用户主动导入资料。
@@ -43,6 +43,7 @@ CLI 使用说明见 [cli/README.md](cli/README.md)，捕获、Git 包和设计�
 cargo test --manifest-path cli/Cargo.toml
 cargo clippy --manifest-path cli/Cargo.toml --all-targets -- -D warnings
 node --test tests/browser-extension-storage.test.mjs
+node --test tests/browser-extension-picker.test.mjs
 ```
 
 浏览器扩展目前还需要在 Chrome 中手动完成界面/页面交互验收；尚未实现脚本导入界面或设计画布。付费网页和云端功能不在这个公开仓库中。

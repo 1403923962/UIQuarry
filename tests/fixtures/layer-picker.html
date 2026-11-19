@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Canvas layer picker regression</title>
+<style>
+  html, body { margin: 0; height: 100%; }
+  #bg-canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: -1; pointer-events: none; }
+  #front { width: 240px; height: 120px; background: white; }
+  #button { display: block; width: 120px; height: 60px; background: red; }
+</style>
+<canvas id="bg-canvas" width="64" height="32"></canvas>
+<section id="front"><button id="button">Foreground control</button></section>
+<output id="result"></output>
+<script>
+  // Only the extension message bridge is simulated. Layout, hit testing and PNG encoding run in Chromium.
+  let onMessage;
+  const messages = [];
+  Object.defineProperty(chrome, "runtime", { value: {
+    onMessage: { addListener(callback) { onMessage = callback; } },
+    sendMessage(message, respond) {
+      messages.push(message);
+      respond({ok: true});
+    }
+  } });
+</script>
+<script src="/content.js"></script>
+<script>
+  const start = (selector = "") => new Promise(resolve =>
+    onMessage({type: "START_PICKER", name: "fixture", targetSelector: selector, includeScreenshot: false}, {}, resolve)
+  );
+  const keyboard = key => document.dispatchEvent(new KeyboardEvent("keydown", {key, bubbles: true, cancelable: true}));
+  function point(type, x = 24, y = 24) {
+    document.elementFromPoint(x, y).dispatchEvent(new MouseEvent(type, {clientX: x, clientY: y, bubbles: true, cancelable: true}));
+  }
+  function check(value, explanation) { if (!value) throw Error(explanation); }
+
+  async function run() {
+    const canvas = document.querySelector("#bg-canvas");
+    const context = canvas.getContext("2d");
+    context.fillStyle = "#123456";
+    context.fillRect(0, 0, 32, 32);
+    context.fillStyle = "#00aa11";
+    context.fillRect(32, 0, 32, 32);
+    const expected = canvas.toDataURL("image/png");
+    check(document.elementFromPoint(24, 24).id === "button", "browser must hit the foreground button");
+    check(!document.elementsFromPoint(24, 24).includes(canvas), "test canvas must be absent from native pointer targets");
+
+    check((await start()).ok, "picker did not start");
+    point("mousemove");
+    point("click");
+    check(messages.at(-1)?.capture.selector === "#button", "normal click lost the foreground button");
+
+    await start();
+    point("mousemove");
+    keyboard("]");
+    keyboard("Enter");
+    check(messages.at(-1)?.capture.selector === "#front", "next layer did not select the containing section");
+
+    await start();
+    point("mousemove");
+    keyboard("c");
+    point("mousemove", 25, 24);
+    point("click", 25, 24);
+    const capture = messages.at(-1);
+    check(capture.capture.selector === "#bg-canvas", "click replaced the selected canvas with its foreground");
+    check(capture.includeScreenshot !== true, "canvas selection requested a viewport screenshot");
+    const bitmap = capture.capture.canvasBitmap;
+    check(bitmap?.dataUrl === expected, "exported bytes differ from the painted background canvas");
+    check(bitmap.width === 64 && bitmap.height === 32, "bitmap must use backing dimensions, independent of CSS width/height");
+
+    await start("#bg-canvas");
+    point("mousemove");
+    keyboard("Enter");
+    check(messages.at(-1)?.capture.selector === "#bg-canvas" && messages.length === 4, "exact selector lost on hover or Enter");
+    for (const selector of ["#missing", "section,button", ".["]) {
+      check((await start(selector)).ok === false, "invalid, missing or ambiguous selector should not start: " + selector);
+    }
+    await start();
+    point("mousemove");
+    keyboard("c");
+    keyboard("Escape");
+    point("click");
+    check(messages.length === 4, "cancelled picker saved a capture");
+    check(!document.querySelector("[data-uiquarry-overlay]"), "picker left an overlay after cancellation");
+  }
+  run().then(() => { document.querySelector("#result").textContent = "PASS"; })
+       .catch(error => { document.querySelector("#result").textContent = "FAIL: " + error.message; });
+</script>
+</html>

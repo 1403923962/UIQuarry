@@ -48,6 +48,21 @@
     },
     "viewport": {"$ref": "#/$defs/size"},
     "bounds": {"$ref": "#/$defs/rect"},
+    "canvasBitmap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width", "height", "dataUrl"],
+      "description": "One frame read from the selected canvas drawing buffer. Dimensions are intrinsic pixels.",
+      "properties": {
+        "width": {"type": "integer", "minimum": 1},
+        "height": {"type": "integer", "minimum": 1},
+        "dataUrl": {
+          "type": "string",
+          "maxLength": 5000000,
+          "pattern": "^data:image/png;base64,(?=.+$)(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+        }
+      }
+    },
     "screenshot": {
       "type": "string",
       "maxLength": 10000000,

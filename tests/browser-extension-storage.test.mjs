@@ -107,6 +107,20 @@ test("viewport capture is omitted when not requested or unavailable", async () =
   assert.equal(app.captures[0].screenshot, undefined);
 });
 
+test("import preserves the isolated canvas frame with no screenshot and rejects external bitmap URLs", async () => {
+  const app = createHarness();
+  const bitmap = { width: 1, height: 1, dataUrl: "data:image/png;base64,iVBORw0KGgo=" };
+  const imported = await app.send({ type: "IMPORT_CAPTURE", capture: capture({ canvasBitmap: bitmap }) });
+  assert.equal(imported.ok, true);
+  assert.deepEqual(app.captures[0].canvasBitmap, bitmap);
+  assert.equal(app.captures[0].screenshot, undefined);
+  for (const invalid of [{ ...bitmap, width: 0 }, { ...bitmap, dataUrl: "https://example.com/background.png" }]) {
+    const result = await app.send({ type: "IMPORT_CAPTURE", capture: capture({ canvasBitmap: invalid }) });
+    assert.equal(result.ok, false);
+  }
+  assert.equal(app.captures.length, 1);
+});
+
 test("keeps DOM/CSS when a combined screenshot would exceed the local storage budget", async () => {
   const jpeg = `data:image/jpeg;base64,${"A".repeat(7_000_000)}`;
   const app = createHarness({ captureVisibleTab: async () => jpeg });

@@ -16,6 +16,7 @@ use uuid::Uuid;
 
 const MAX_CAPTURE_BYTES: u64 = 12 * 1024 * 1024;
 const MAX_SCREENSHOT_CHARS: usize = 10_000_000;
+const MAX_CANVAS_BITMAP_CHARS: usize = 5_000_000;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -197,6 +198,9 @@ fn validate_capture(value: &Value) -> Result<()> {
             .ok_or_else(|| anyhow!("capture screenshot must be a data URL string"))?;
         validate_screenshot_data_url(screenshot)?;
     }
+    if let Some(bitmap) = value.get("canvasBitmap") {
+        validate_canvas_bitmap(bitmap).context("invalid canvasBitmap")?;
+    }
     if let Some(tags) = value.get("tags") {
         let tags = tags
             .as_array()
@@ -293,14 +297,43 @@ fn validate_screenshot_data_url(value: &str) -> Result<()> {
         .strip_prefix("data:image/png;base64,")
         .or_else(|| value.strip_prefix("data:image/jpeg;base64,"))
         .ok_or_else(|| anyhow!("capture screenshot must be a PNG or JPEG base64 data URL"))?;
+    validate_base64(payload)
+}
+
+fn validate_canvas_bitmap(bitmap: &Value) -> Result<()> {
+    let fields = bitmap.as_object().ok_or_else(|| anyhow!("expected an object"))?;
+    if fields
+        .keys()
+        .any(|key| !matches!(key.as_str(), "width" | "height" | "dataUrl"))
+    {
+        bail!("unexpected canvas bitmap field")
+    }
+    for dimension in ["width", "height"] {
+        if bitmap[dimension].as_u64().is_none_or(|n| n == 0) {
+            bail!("{dimension} must be a positive integer in intrinsic pixels")
+        }
+    }
+    let data_url = bitmap["dataUrl"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing PNG dataUrl"))?;
+    if data_url.len() > MAX_CANVAS_BITMAP_CHARS {
+        bail!("canvas bitmap exceeds the 5,000,000-character data URL limit")
+    }
+    let payload = data_url
+        .strip_prefix("data:image/png;base64,")
+        .ok_or_else(|| anyhow!("canvas bitmap must use a PNG base64 data URL"))?;
+    validate_base64(payload)
+}
+
+fn validate_base64(payload: &str) -> Result<()> {
     let bytes = payload.as_bytes();
-    if bytes.is_empty() || bytes.len() % 4 != 0 {
-        bail!("capture screenshot contains invalid base64 data")
+    if bytes.is_empty() || !bytes.len().is_multiple_of(4) {
+        bail!("invalid base64 data")
     }
 
     let padding = bytes.iter().rev().take_while(|byte| **byte == b'=').count();
     if padding > 2 {
-        bail!("capture screenshot contains invalid base64 padding")
+        bail!("invalid base64 padding")
     }
     let data_len = bytes.len() - padding;
     if bytes[..data_len]
@@ -308,7 +341,7 @@ fn validate_screenshot_data_url(value: &str) -> Result<()> {
         .any(|byte| !byte.is_ascii_alphanumeric() && *byte != b'+' && *byte != b'/')
         || bytes[data_len..].iter().any(|byte| *byte != b'=')
     {
-        bail!("capture screenshot contains invalid base64 data")
+        bail!("invalid base64 data")
     }
     let expected_remainder = match padding {
         0 => 0,
@@ -317,7 +350,7 @@ fn validate_screenshot_data_url(value: &str) -> Result<()> {
         _ => unreachable!(),
     };
     if data_len % 4 != expected_remainder {
-        bail!("capture screenshot contains invalid base64 padding")
+        bail!("invalid base64 padding")
     }
     Ok(())
 }
@@ -752,6 +785,54 @@ mod tests {
 
         value["screenshot"] = json!("data:image/png;base64,iVBORw0KGgo=");
         assert!(validate_capture(&value).is_ok());
+    }
+
+    #[test]
+    fn selected_canvas_frame_survives_packaging_without_viewport_screenshot() {
+        let dir = tempdir().unwrap();
+        let input = dir.path().join("input.json");
+        let package = dir.path().join("package");
+        let mut value = capture();
+        value["selector"] = json!("#background");
+        value["html"] = json!(r#"<canvas id="background" width="1" height="1"></canvas>"#);
+        let png = concat!(
+            "data:image/png;base64,",
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jF1sAAAAASUVORK5CYII="
+        );
+        value["canvasBitmap"] = json!({"width":1, "height":1, "dataUrl":png});
+        fs::write(&input, serde_json::to_vec(&value).unwrap()).unwrap();
+        create_capture_package(&input, &package, "demo/background").unwrap();
+        assert_eq!(validate_package(&package).unwrap(), "demo/background");
+        let stored: Value =
+            serde_json::from_slice(&fs::read(package.join("captures/demo/background/capture.json")).unwrap()).unwrap();
+        assert_eq!(stored["canvasBitmap"], value["canvasBitmap"]);
+        assert!(stored.get("screenshot").is_none());
+    }
+
+    #[test]
+    fn rejects_invalid_selected_canvas_frames() {
+        let bitmap = json!({"width": 2, "height": 2, "dataUrl": "data:image/png;base64,iVBORw0KGgo="});
+        let mut capture = capture();
+        for (field, invalid) in [
+            ("width", json!(0)),
+            ("height", json!(-1)),
+            ("width", json!(1.5)),
+            ("height", json!("2")),
+            ("dataUrl", json!("data:image/jpeg;base64,/9j/2Q==")),
+            ("dataUrl", json!("data:image/png;base64,A===")),
+            (
+                "dataUrl",
+                json!(format!("data:image/png;base64,{}", "A".repeat(MAX_CANVAS_BITMAP_CHARS))),
+            ),
+            ("extra", json!("unexpected")),
+        ] {
+            let mut bad = bitmap.clone();
+            bad[field] = invalid;
+            capture["canvasBitmap"] = bad;
+            assert!(validate_capture(&capture).is_err(), "accepted invalid bitmap {field}");
+        }
+        capture["canvasBitmap"] = json!({"width":1,"height":1});
+        assert!(validate_capture(&capture).is_err());
     }
 
     #[test]

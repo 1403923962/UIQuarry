@@ -18,6 +18,8 @@ The manifest's `origin` is provenance for the publication/source revision, not a
 
 Capture only the selected element and its necessary descendants. Sanitize the HTML before persistence: remove scripts, inline event handlers, form values, and active embedded content; do not collect cookies, storage, network credentials, or the full page's scripts. `scripts` is empty by default. A future explicit script import must identify its source, relation, and license and require a separate user action. Computed CSS should be scoped to the captured fragment and include only selected/contextual declarations; keep the original page URL and selector as provenance. Geometry is relative to the recorded viewport. An optional screenshot is a PNG/JPEG data URL of the current visible tab viewport (maximum 10,000,000 characters); it is opt-in context for canvas and other pixels that DOM/CSS cannot reconstruct, not a stitched full-page capture. Interaction samples are observations, not executable replay code.
 
+When the selected element is a `<canvas>`, the optional `canvasBitmap` object stores its own pixels at the moment of capture. `width` and `height` are positive integers taken from the canvas backing buffer. The element's size on screen is recorded separately in `bounds`. `dataUrl` contains a base64 PNG with a maximum of 5,000,000 characters including the `data:image/png;base64,` prefix. Either `canvasBitmap` or the optional viewport `screenshot` can be present independently. If the frame cannot be read, omit `canvasBitmap` and record the reason in `notes`.
+
 ## Package layout
 
 Suggested paths are conventions; manifest `files` is authoritative.

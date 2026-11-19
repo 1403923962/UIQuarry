@@ -29,7 +29,13 @@ startButton.addEventListener("click", async () => {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) throw new Error("没有找到当前网页。");
     await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] });
-    const reply = await chrome.tabs.sendMessage(tab.id, { type: "START_PICKER", name: $("name").value.trim() || "已捕获组件", tags: $("tags").value.split(",").map((tag) => tag.trim()).filter(Boolean).slice(0, 20), includeScreenshot: $("include-screenshot").checked });
+    const reply = await chrome.tabs.sendMessage(tab.id, {
+      type: "START_PICKER",
+      name: $("name").value.trim() || "已捕获组件",
+      tags: $("tags").value.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean).slice(0, 20),
+      targetSelector: $("target-selector").value.trim(),
+      includeScreenshot: $("include-screenshot").checked
+    });
     if (!reply?.ok) throw new Error(reply?.error || "无法打开元素选择器。");
     $("status").textContent = "悬停查看元素，点击完成捕获；按 Esc 取消。";
     window.close();
@@ -90,6 +96,26 @@ function actionButton(label, title, handler, kind = "") {
 function showDetails(capture) {
   const list = $("details-list"); list.replaceChildren();
   const fields = [["名称", capture.name || "未命名组件"], ["来源", capture.sourceUrl || "未知"], ["选择器", capture.selector || "未知"], ["捕获时间", formatDate(capture.capturedAt)], ["元素尺寸", capture.bounds ? `${capture.bounds.width} × ${capture.bounds.height}` : "未知"]];
+  const bitmap = capture.canvasBitmap?.dataUrl?.startsWith?.("data:image/png;base64,") ? capture.canvasBitmap : null;
+  $("canvas-frame").hidden = !bitmap;
+  $("canvas-image").removeAttribute("src");
+  $("export-canvas").onclick = null;
+  if (bitmap) {
+    fields.push(["画布分辨率", `${bitmap.width} × ${bitmap.height} px`]);
+    $("canvas-image").src = bitmap.dataUrl;
+    $("export-canvas").onclick = async () => {
+      try {
+        await chrome.downloads.download({
+          url: bitmap.dataUrl, filename: `${safeFilename(capture.selector)}.png`, saveAs: true, conflictAction: "uniquify"
+        });
+        $("status").textContent = "已开始导出画布 PNG。";
+      } catch (error) {
+        $("status").textContent = `导出失败：${error.message}`;
+      }
+    };
+  } else if (capture.notes?.startsWith?.("仅保存画布元素和样式。")) {
+    fields.push(["画布状态", capture.notes]);
+  }
   for (const [label, value] of fields) { const term = document.createElement("dt"); term.textContent = label; const description = document.createElement("dd"); description.textContent = value; description.title = value; list.append(term, description); }
   $("details-preview").textContent = capture.html || "没有 HTML 预览";
   const screenshot = $("details-shot");
@@ -112,7 +138,7 @@ function deleteLocalCapture(localId, item) {
   if (!localId) return;
   chrome.runtime.sendMessage({ type: "DELETE_CAPTURE", localId }, (result) => {
     if (chrome.runtime.lastError || !result?.ok) { $("status").textContent = "删除失败，请重试。"; return; }
-    item.remove(); if (!$("recent").querySelector("li")) $("recent").innerHTML = '<li class="empty">还没有捕获内容</li>'; $("status").textContent = result.deleted ? "已从本浏览器删除。" : "该捕获已经不存在。";
+    item.remove(); $("details").hidden = true; loadRecent(); $("status").textContent = result.deleted ? "已从本浏览器删除。" : "该捕获已经不存在。";
   });
 }
 

@@ -13,8 +13,9 @@
     <input id="name" maxlength="100" value="已捕获组件" autocomplete="off">
     <label for="tags">标签 <span>用逗号分隔</span></label>
     <input id="tags" maxlength="300" placeholder="按钮，导航，卡片" autocomplete="off">
-    <label class="check-row"><input id="include-screenshot" type="checkbox" checked><span>保存当前可视区域截图（包含 canvas/背景，仅本机保存）</span></label>
-    <p class="privacy-note">截图只包含当前屏幕可见范围，可能带入选中组件以外的内容；可取消勾选。</p>
+    <label for="target-selector">精确定位 <span>可选 · CSS 选择器</span></label>
+    <input id="target-selector" maxlength="2048" placeholder="例如 canvas#bg-canvas" autocomplete="off" spellcheck="false">
+    <label class="check-row"><input id="include-screenshot" type="checkbox"><span>额外保存整个可视区域的截图</span></label>
     <button id="start" type="button"><span aria-hidden="true">⌖</span> 选择网页元素</button>
     <button id="import" class="secondary" type="button">导入 Capture JSON</button>
     <input id="import-file" type="file" accept="application/json,.json" hidden>
@@ -26,10 +27,15 @@
     <section id="details" class="details" aria-labelledby="details-heading" hidden>
       <div class="details-header"><h2 id="details-heading">组件详情</h2><button id="close-details" class="close-details" type="button" aria-label="关闭详情">×</button></div>
       <dl id="details-list"></dl>
+      <figure id="canvas-frame" hidden>
+        <figcaption>画布原始像素 · PNG</figcaption>
+        <img id="canvas-image" alt="选中的画布当前帧">
+        <button type="button" id="export-canvas" class="capture-action">导出画布 PNG</button>
+      </figure>
       <img id="details-shot" alt="采集时的可视区域截图" hidden>
       <pre id="details-preview"></pre>
     </section>
-    <p class="hint">开始后悬停查看元素，点击完成捕获；按 Esc 取消。</p>
+    <p class="hint">悬停后按 ↑ 或 ↓ 切换图层，按 C 选中该位置的画布。点击或按 Enter 保存，Esc 退出。</p>
   </main>
   <script src="popup.js"></script>
 </body>

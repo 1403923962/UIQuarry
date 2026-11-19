@@ -14,79 +14,184 @@
   const BAD_ATTRIBUTES = /^(?:on\w+|value|checked|selected|srcdoc|nonce|integrity|autofocus|style|srcset)$/i;
   const URL_ATTRIBUTES = new Set(["href", "src", "action", "formaction", "poster", "xlink:href"]);
 
+  let stopCurrentPicker;
+
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === "START_PICKER") {
-      startPicker(message).then(sendResponse);
-      return true;
+      try {
+        startPicker(message);
+        sendResponse({ ok: true });
+      } catch (error) {
+        sendResponse({ ok: false, error: error.message });
+      }
     }
   });
 
-  function startPicker(metadata) {
-    return new Promise((resolve) => {
-      if (!document.documentElement) return resolve({ ok: false, error: "Page is not ready." });
-      const overlay = document.createElement("div");
-      overlay.setAttribute("data-uiquarry-overlay", "true");
-      Object.assign(overlay.style, {
-        all: "initial", position: "fixed", zIndex: "2147483647", pointerEvents: "none", display: "none",
-        border: "2px solid #25b981", background: "rgba(37,185,129,.13)", boxSizing: "border-box",
-        font: "12px/1.2 system-ui,sans-serif", color: "#fff", textShadow: "0 1px 3px #000", padding: "3px 5px"
-      });
-      document.documentElement.appendChild(overlay);
-      let active = true;
+  function canPick(node) {
+    return node !== document.body && node !== document.documentElement && !OMIT_TAGS.has(node.tagName.toUpperCase());
+  }
 
-      const finish = (result) => {
-        if (!active) return;
-        active = false;
-        document.removeEventListener("mousemove", onMove, true);
-        document.removeEventListener("click", onClick, true);
-        document.removeEventListener("keydown", onKey, true);
-        overlay.remove();
-        resolve(result);
-      };
-      const onMove = (event) => {
-        const node = document.elementFromPoint(event.clientX, event.clientY);
-        if (!node || node === overlay || node === document.documentElement || node === document.body) {
-          overlay.style.display = "none";
+  function isRendered(node) {
+    const rect = node.getBoundingClientRect();
+    if (!node.isConnected || rect.width <= 0 || rect.height <= 0) return false;
+    if (node.checkVisibility) return node.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
+    const style = getComputedStyle(node);
+    return style.display !== "none" && style.visibility === "visible" && style.opacity !== "0";
+  }
+
+  function uniqueTarget(selector) {
+    let matches;
+    try {
+      matches = document.querySelectorAll(selector);
+    } catch {
+      throw new Error("CSS 选择器语法有误。");
+    }
+    if (!matches.length) throw new Error("当前文档中没有匹配这个选择器的元素。");
+    if (matches.length > 1) throw new Error(`匹配了 ${matches.length} 个元素，请缩小选择范围。`);
+    if (!canPick(matches[0]) || !isRendered(matches[0])) throw new Error("匹配的元素不可见或不支持采集。");
+    return matches[0];
+  }
+
+  function startPicker(metadata) {
+    stopCurrentPicker?.();
+    if (!document.documentElement) throw new Error("页面还没有准备好。");
+    const selector = metadata.targetSelector?.trim();
+    const locked = selector ? uniqueTarget(selector) : null;
+    const overlay = document.createElement("div");
+    overlay.setAttribute("data-uiquarry-overlay", "true");
+    Object.assign(overlay.style, {
+      all: "initial", position: "fixed", zIndex: "2147483647", pointerEvents: "none", display: "none",
+      border: "2px solid #25b981", background: "rgba(37,185,129,.13)", boxSizing: "border-box"
+    });
+    const hint = document.createElement("div");
+    hint.setAttribute("data-uiquarry-hint", "true");
+    Object.assign(hint.style, {
+      all: "initial", position: "fixed", zIndex: "2147483647", pointerEvents: "none", top: "8px", left: "8px",
+      maxWidth: "calc(100vw - 16px)", boxSizing: "border-box", overflowWrap: "anywhere", padding: "6px 10px",
+      background: "#182820", color: "white", borderRadius: "6px", font: "13px/1.4 system-ui,sans-serif"
+    });
+    document.documentElement.append(overlay, hint);
+
+    const canvases = document.getElementsByTagName("canvas");
+    const controller = new AbortController();
+    const options = { capture: true, signal: controller.signal };
+    let point = null;
+    let layers = locked ? [locked] : [];
+    let index = 0;
+    let cycled = false;
+
+    function finish() {
+      controller.abort();
+      overlay.remove();
+      hint.remove();
+      stopCurrentPicker = null;
+    }
+
+    function redraw() {
+      const node = layers[index];
+      overlay.style.display = node ? "block" : "none";
+      if (!node) {
+        hint.textContent = "将鼠标移到要采集的位置 · Esc 取消";
+        return;
+      }
+      const rect = node.getBoundingClientRect();
+      Object.assign(overlay.style, { left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.width}px`, height: `${rect.height}px` });
+      const target = node.localName + (node.id ? "#" + node.id : "");
+      const controls = locked ? "选择器已锁定" : `第 ${index + 1}/${layers.length} 层 · ↑↓ 切层 · C 选画布`;
+      hint.textContent = `${target} · ${controls} · 点击或 Enter 确认 · Esc 取消`;
+    }
+
+    function refresh(x, y) {
+      point = { x, y };
+      if (!locked) {
+        const current = layers[index];
+        const hits = document.elementsFromPoint(x, y).filter(node => node !== overlay && node !== hint && canPick(node));
+        const candidates = new Set(hits);
+        // Native hit testing omits pointer-transparent canvases, including fixed backgrounds.
+        for (const canvas of canvases) {
+          if (candidates.has(canvas)) continue;
+          const rect = canvas.getBoundingClientRect();
+          if (x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom && isRendered(canvas)) candidates.add(canvas);
+        }
+        layers = [...candidates];
+        index = cycled ? layers.indexOf(current) : 0;
+        if (index < 0) { index = 0; cycled = false; }
+      }
+      redraw();
+    }
+
+    function confirm() {
+      const node = layers[index];
+      if (!node) return;
+      finish();
+      if (!isRendered(node)) {
+        showToast("选中的元素已消失，请重新选择。");
+        return;
+      }
+      try {
+        const capture = createCapture(node, metadata);
+        chrome.runtime.sendMessage({ type: "COMPONENT_CAPTURED", capture, includeScreenshot: metadata.includeScreenshot === true }, (result) => {
+          if (chrome.runtime.lastError || !result?.ok) {
+            showToast(result?.error ? `保存失败：${result.error}` : "保存失败，请重试");
+            return;
+          }
+          let message = "已保存到本机 UIQuarry 库";
+          if (node.localName === "canvas") message = capture.canvasBitmap ? "已保存 Canvas 元素及其独立画面" : "已保存 Canvas 结构，画布像素不可用";
+          if (result.screenshotUnavailable) message += "（可视区域截图不可用）";
+          else if (result.screenshotCaptured) message += "（含可视区域截图）";
+          showToast(message);
+        });
+      } catch (error) {
+        showToast(`捕获失败：${error.message}`);
+      }
+    }
+
+    const onViewportChange = () => {
+      if (point) refresh(point.x, point.y);
+      else redraw();
+    };
+    document.addEventListener("mousemove", event => refresh(event.clientX, event.clientY), options);
+    document.addEventListener("click", event => {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const targetBeforeClick = cycled ? layers[index] : null;
+      refresh(event.clientX, event.clientY);
+      if (targetBeforeClick && targetBeforeClick !== layers[index]) {
+        hint.textContent = "原图层已移走，请重新选择并确认。";
+        return;
+      }
+      confirm();
+    }, options);
+    document.addEventListener("keydown", event => {
+      if (event.altKey || event.ctrlKey || event.metaKey || event.isComposing) return;
+      const key = event.key.toLowerCase();
+      if (!["escape", "enter", "arrowup", "arrowdown", "[", "]", "c"].includes(key)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (key === "escape") { finish(); return; }
+      if (key === "enter") { confirm(); return; }
+      if (locked || !layers.length) return;
+      if (key === "c") {
+        if (!layers.some(node => node.localName === "canvas")) {
+          hint.textContent = "此处没有可选画布，请移动到画布上方。";
           return;
         }
-        const rect = node.getBoundingClientRect();
-        Object.assign(overlay.style, { display: "block", left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.width}px`, height: `${rect.height}px` });
-        overlay.textContent = `${node.tagName.toLowerCase()}${node.id ? `#${node.id}` : ""}`;
-      };
-      const onClick = (event) => {
-        if (!active) return;
-        const node = document.elementFromPoint(event.clientX, event.clientY);
-        if (!node || node === overlay || node === document.documentElement || node === document.body) return;
-        event.preventDefault();
-        event.stopPropagation();
-        event.stopImmediatePropagation();
-        try {
-          const capture = createCapture(node, metadata);
-          chrome.runtime.sendMessage({ type: "COMPONENT_CAPTURED", capture, includeScreenshot: metadata.includeScreenshot === true }, (result) => {
-            const error = chrome.runtime.lastError;
-            const message = error || !result?.ok
-              ? `保存失败${result?.error ? `：${result.error}` : "，请重试"}`
-              : result.screenshotCaptured
-                ? "已保存到本机（含可视区域截图）"
-                : result.screenshotUnavailable
-                  ? "已保存 HTML/CSS；可视区域截图不可用"
-                  : "已保存到本机 UIQuarry 库";
-            showToast(message);
-          });
-          finish({ ok: true });
-        } catch (error) {
-          showToast(`捕获失败：${error.message}`);
-          finish({ ok: false, error: error.message });
+        for (let i = 1; i <= layers.length; i++) {
+          const next = (index + i) % layers.length;
+          if (layers[next].localName === "canvas") { index = next; cycled = true; break; }
         }
-      };
-      const onKey = (event) => {
-        if (event.key === "Escape") finish({ ok: true, cancelled: true });
-      };
-      document.addEventListener("mousemove", onMove, true);
-      document.addEventListener("click", onClick, true);
-      document.addEventListener("keydown", onKey, true);
-      resolve({ ok: true });
-    });
+      } else {
+        const step = key === "arrowup" || key === "[" ? -1 : 1;
+        index = (index + step + layers.length) % layers.length;
+        cycled = true;
+      }
+      redraw();
+    }, options);
+    window.addEventListener("scroll", onViewportChange, options);
+    window.addEventListener("resize", onViewportChange, options);
+    window.addEventListener("pagehide", finish, options);
+    stopCurrentPicker = finish;
+    redraw();
   }
 
   function createCapture(root, metadata) {
@@ -100,7 +205,7 @@
     const css = state.cssRules.join("\n");
     if (new TextEncoder().encode(css).byteLength > 1_000_000) throw new Error("Selected styles exceed 1 MB. Select a smaller component.");
 
-    return {
+    const capture = {
       schemaVersion: 1,
       name: cleanText(metadata.name || root.getAttribute("aria-label") || root.tagName.toLowerCase(), 100),
       tags: Array.isArray(metadata.tags) ? metadata.tags.map((tag) => cleanText(tag, 40)).filter(Boolean).slice(0, 20) : [],
@@ -115,6 +220,30 @@
       bounds: { x: round(rect.x), y: round(rect.y), width: round(rect.width), height: round(rect.height) },
       notes: "Scripts and interaction events are not collected automatically. Add only explicitly selected, licensed source in a later recording step. Input values are removed; review captured text and URLs before sharing."
     };
+    if (root instanceof HTMLCanvasElement) captureCanvasFrame(root, capture);
+    return capture;
+  }
+
+  function captureCanvasFrame(canvas, capture) {
+    const { width, height } = canvas;
+    let reason;
+    if (!width || !height) {
+      reason = "画布尺寸为零";
+    } else if (width * height > 16_777_216) {
+      reason = "画布超过 1600 万像素";
+    } else {
+      try {
+        const dataUrl = canvas.toDataURL("image/png");
+        if (dataUrl.startsWith("data:image/png;base64,") && dataUrl.length <= 5_000_000) {
+          capture.canvasBitmap = { width, height, dataUrl };
+          return;
+        }
+        reason = "画布未返回 PNG 或图像过大";
+      } catch (error) {
+        reason = error.name === "SecurityError" ? "浏览器限制读取含跨域资源的画布" : "浏览器无法读取画布";
+      }
+    }
+    capture.notes = `仅保存画布元素和样式。${reason}。`;
   }
 
   // Rebuild the tree recursively to keep each original element paired with the

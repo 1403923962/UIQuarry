@@ -41,6 +41,7 @@ function isValidCapture(value) {
   if (!/^https?:\/\//i.test(value.sourceUrl) || Number.isNaN(Date.parse(value.capturedAt))) return false;
   if (new TextEncoder().encode(value.html).byteLength > 2_000_000 || new TextEncoder().encode(value.css).byteLength > 1_000_000) return false;
   if (!Array.isArray(value.scripts) || !Array.isArray(value.events) || !value.viewport || !value.bounds) return false;
+  if (value.canvasBitmap !== undefined && !validCanvasBitmap(value.canvasBitmap)) return false;
   if (value.screenshot !== undefined && (typeof value.screenshot !== "string" || value.screenshot.length > MAX_SCREENSHOT_CHARS || !/^data:image\/(?:jpeg|png);base64,(?=.+$)(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value.screenshot))) return false;
   if (value.scripts.length > 100 || value.events.length > 1000) return false;
   if (value.tags !== undefined && (!Array.isArray(value.tags) || value.tags.length > 50 || value.tags.some((tag) => typeof tag !== "string" || !tag.trim() || tag.length > 64))) return false;
@@ -48,6 +49,15 @@ function isValidCapture(value) {
   if (value.events.some((event) => !event || typeof event !== "object" || typeof event.type !== "string" || typeof event.target !== "string" || !Number.isFinite(event.atMs) || event.atMs < 0)) return false;
   if (!Number.isFinite(value.viewport.width) || value.viewport.width < 0 || !Number.isFinite(value.viewport.height) || value.viewport.height < 0) return false;
   return Number.isFinite(value.bounds.x) && Number.isFinite(value.bounds.y) && Number.isFinite(value.bounds.width) && value.bounds.width >= 0 && Number.isFinite(value.bounds.height) && value.bounds.height >= 0;
+}
+
+function validCanvasBitmap(bitmap) {
+  const prefix = "data:image/png;base64,";
+  if (!bitmap || Object.keys(bitmap).length !== 3 || typeof bitmap.dataUrl !== "string" || !bitmap.dataUrl.startsWith(prefix)
+      || bitmap.dataUrl.length > 5_000_000) return false;
+  if (![bitmap.width, bitmap.height].every(size => Number.isSafeInteger(size) && size > 0)) return false;
+  const payload = bitmap.dataUrl.slice(prefix.length);
+  return payload.length > 0 && payload.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(payload);
 }
 
 async function saveCapture(capture, screenshotTab = null) {
