@@ -17,6 +17,8 @@ use uuid::Uuid;
 const MAX_CAPTURE_BYTES: u64 = 12 * 1024 * 1024;
 const MAX_SCREENSHOT_CHARS: usize = 10_000_000;
 const MAX_CANVAS_BITMAP_CHARS: usize = 5_000_000;
+const MAX_COMPOSITE_BITMAP_CHARS: usize = 3_000_000;
+const MAX_CANVAS_RECORDING_CHARS: usize = 3_000_000;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -199,7 +201,13 @@ fn validate_capture(value: &Value) -> Result<()> {
         validate_screenshot_data_url(screenshot)?;
     }
     if let Some(bitmap) = value.get("canvasBitmap") {
-        validate_canvas_bitmap(bitmap).context("invalid canvasBitmap")?;
+        validate_media_bitmap(bitmap, "canvasBitmap", "png", MAX_CANVAS_BITMAP_CHARS)?;
+    }
+    if let Some(bitmap) = value.get("compositeBitmap") {
+        validate_media_bitmap(bitmap, "compositeBitmap", "jpeg", MAX_COMPOSITE_BITMAP_CHARS)?;
+    }
+    if let Some(recording) = value.get("canvasRecording") {
+        validate_canvas_recording(recording)?;
     }
     if let Some(tags) = value.get("tags") {
         let tags = tags
@@ -300,28 +308,60 @@ fn validate_screenshot_data_url(value: &str) -> Result<()> {
     validate_base64(payload)
 }
 
-fn validate_canvas_bitmap(bitmap: &Value) -> Result<()> {
-    let fields = bitmap.as_object().ok_or_else(|| anyhow!("expected an object"))?;
+fn validate_media_bitmap(bitmap: &Value, label: &str, format: &str, max_chars: usize) -> Result<()> {
+    let fields = bitmap.as_object().ok_or_else(|| anyhow!("{label} must be an object"))?;
     if fields
         .keys()
         .any(|key| !matches!(key.as_str(), "width" | "height" | "dataUrl"))
     {
-        bail!("unexpected canvas bitmap field")
+        bail!("unexpected {label} field")
     }
     for dimension in ["width", "height"] {
         if bitmap[dimension].as_u64().is_none_or(|n| n == 0) {
-            bail!("{dimension} must be a positive integer in intrinsic pixels")
+            bail!("{label} {dimension} must be a positive integer")
         }
     }
     let data_url = bitmap["dataUrl"]
         .as_str()
-        .ok_or_else(|| anyhow!("missing PNG dataUrl"))?;
-    if data_url.len() > MAX_CANVAS_BITMAP_CHARS {
-        bail!("canvas bitmap exceeds the 5,000,000-character data URL limit")
+        .ok_or_else(|| anyhow!("{label} is missing dataUrl"))?;
+    if data_url.len() > max_chars {
+        bail!("{label} data URL is too large")
+    }
+    let prefix = format!("data:image/{format};base64,");
+    let payload = data_url
+        .strip_prefix(&prefix)
+        .ok_or_else(|| anyhow!("{label} must use a {format} base64 data URL"))?;
+    validate_base64(payload)
+}
+
+fn validate_canvas_recording(recording: &Value) -> Result<()> {
+    let fields = recording
+        .as_object()
+        .ok_or_else(|| anyhow!("canvasRecording must be an object"))?;
+    if fields
+        .keys()
+        .any(|key| !matches!(key.as_str(), "durationMs" | "mimeType" | "dataUrl"))
+    {
+        bail!("unexpected canvasRecording field")
+    }
+    let duration = recording["durationMs"]
+        .as_u64()
+        .ok_or_else(|| anyhow!("canvasRecording durationMs must be an integer"))?;
+    if !(1..=6000).contains(&duration) {
+        bail!("canvasRecording durationMs must be between 1 and 6000")
+    }
+    if recording["mimeType"].as_str() != Some("video/webm") {
+        bail!("canvasRecording mimeType must be video/webm")
+    }
+    let data_url = recording["dataUrl"]
+        .as_str()
+        .ok_or_else(|| anyhow!("canvasRecording is missing dataUrl"))?;
+    if data_url.len() > MAX_CANVAS_RECORDING_CHARS {
+        bail!("canvasRecording data URL is too large")
     }
     let payload = data_url
-        .strip_prefix("data:image/png;base64,")
-        .ok_or_else(|| anyhow!("canvas bitmap must use a PNG base64 data URL"))?;
+        .strip_prefix("data:video/webm;base64,")
+        .ok_or_else(|| anyhow!("canvasRecording must use a WebM base64 data URL"))?;
     validate_base64(payload)
 }
 
@@ -833,6 +873,60 @@ mod tests {
         }
         capture["canvasBitmap"] = json!({"width":1,"height":1});
         assert!(validate_capture(&capture).is_err());
+    }
+
+    #[test]
+    fn optional_compositor_crop_and_canvas_recording_survive_package_roundtrip() {
+        let dir = tempdir().unwrap();
+        let input = dir.path().join("input.json");
+        let package = dir.path().join("package");
+        let mut value = capture();
+        value["compositeBitmap"] = json!({
+            "width": 320,
+            "height": 180,
+            "dataUrl": "data:image/jpeg;base64,/9j/2Q=="
+        });
+        value["canvasRecording"] = json!({
+            "durationMs": 2500,
+            "mimeType": "video/webm",
+            "dataUrl": "data:video/webm;base64,d2VibQ=="
+        });
+        fs::write(&input, serde_json::to_vec(&value).unwrap()).unwrap();
+        create_capture_package(&input, &package, "demo/canvas-motion").unwrap();
+        validate_package(&package).unwrap();
+        let stored: Value =
+            serde_json::from_slice(&fs::read(package.join("captures/demo/canvas-motion/capture.json")).unwrap())
+                .unwrap();
+        assert_eq!(stored["compositeBitmap"], value["compositeBitmap"]);
+        assert_eq!(stored["canvasRecording"], value["canvasRecording"]);
+    }
+
+    #[test]
+    fn rejects_bad_composite_bitmap_or_canvas_recording_contracts() {
+        let mut value = capture();
+        let good_crop = json!({"width": 100, "height": 50, "dataUrl": "data:image/jpeg;base64,/9j/2Q=="});
+        for invalid in [
+            json!({"width":0,"height":50,"dataUrl":"data:image/jpeg;base64,/9j/2Q=="}),
+            json!({"width":100,"height":50,"dataUrl":"data:image/png;base64,iVBORw0KGgo="}),
+            json!({"width":100,"height":50,"dataUrl":"data:image/jpeg;base64,A==="}),
+            json!({"width":100,"height":50,"dataUrl":format!("data:image/jpeg;base64,{}", "A".repeat(MAX_COMPOSITE_BITMAP_CHARS))}),
+        ] {
+            value["compositeBitmap"] = invalid;
+            assert!(validate_capture(&value).is_err());
+        }
+        value["compositeBitmap"] = good_crop;
+
+        for invalid in [
+            json!({"durationMs":0,"mimeType":"video/webm","dataUrl":"data:video/webm;base64,d2VibQ=="}),
+            json!({"durationMs":6001,"mimeType":"video/webm","dataUrl":"data:video/webm;base64,d2VibQ=="}),
+            json!({"durationMs":1.5,"mimeType":"video/webm","dataUrl":"data:video/webm;base64,d2VibQ=="}),
+            json!({"durationMs":2000,"mimeType":"video/mp4","dataUrl":"data:video/mp4;base64,d2VibQ=="}),
+            json!({"durationMs":2000,"mimeType":"video/webm","dataUrl":"data:video/webm;base64,A==="}),
+            json!({"durationMs":2000,"mimeType":"video/webm","dataUrl":format!("data:video/webm;base64,{}", "A".repeat(MAX_CANVAS_RECORDING_CHARS))}),
+        ] {
+            value["canvasRecording"] = invalid;
+            assert!(validate_capture(&value).is_err());
+        }
     }
 
     #[test]

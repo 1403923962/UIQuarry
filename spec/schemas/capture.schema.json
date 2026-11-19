@@ -63,6 +63,36 @@
         }
       }
     },
+    "compositeBitmap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["width", "height", "dataUrl"],
+      "description": "Optional compositor-rendered crop of the selected element's visible bounds. Unlike canvasBitmap, this captures the final on-screen result and can work when a WebGL drawing buffer has already been cleared.",
+      "properties": {
+        "width": {"type": "integer", "minimum": 1},
+        "height": {"type": "integer", "minimum": 1},
+        "dataUrl": {
+          "type": "string",
+          "maxLength": 3000000,
+          "pattern": "^data:image/jpeg;base64,(?=.+$)(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+        }
+      }
+    },
+    "canvasRecording": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["durationMs", "mimeType", "dataUrl"],
+      "description": "Optional short recording of the selected canvas only. It is a visual playback, not the source shader, JavaScript, or a guarantee that the interaction can be recreated.",
+      "properties": {
+        "durationMs": {"type": "integer", "minimum": 1, "maximum": 6000},
+        "mimeType": {"const": "video/webm"},
+        "dataUrl": {
+          "type": "string",
+          "maxLength": 3000000,
+          "pattern": "^data:video/webm;base64,(?=.+$)(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+        }
+      }
+    },
     "screenshot": {
       "type": "string",
       "maxLength": 10000000,

@@ -8,6 +8,9 @@ UIQuarry public 是一个 GPL-3.0 开源的浏览器本地工具：选取网页�
 
 - **浏览器本地采集**：扩展选中页面元素，记录经净化的 HTML、元素样式、尺寸和来源，全部保存在浏览器本机。它是参考快照，不假设能从任意网页完整还原 JSX、私有脚本或原始设计稿。
 - **背景 Canvas**：在“精确定位”输入唯一的 CSS 选择器（如 `#bg-canvas`），或者左键定点后按 `C` 选中该处的画布。按 Enter 确认后，“详情”可预览并导出该画布的一帧 PNG。需要保留前后图层的合成效果时，可另外勾选可视区域截图。
+- **WebGL / 动效观察**：可按站点开启 WebGL 保帧，可选录制所选 Canvas 的短 WebM，或裁切浏览器合成后的目标区域。它们是像素/视频观察，不是源码或 shader 自动还原。
+
+WebGL 保帧默认关闭，需要按站点授权并刷新后才能影响新建上下文。画布录制最多 6 秒且不录音频。合成裁切保存浏览器绘制后的目标区域，像素可受遮挡影响。这些选项帮助观察和复刻视觉状态，但不会提取页面的 JS 或 shader 源码。
 - **离线组件包**：CLI 创建带 `quarry.json` 清单的普通 Git 文件包。开发者可以自行提交、克隆、fork、分支、合并和分享。
 - **公开格式**：`spec/` 定义捕获、组件包和受约束设计模型的公开格式，供私有产品或第三方工具消费。
 - **付费网页产品**：网页工作台、云端存储/检索、团队权限、计费、AI 上下文和设计编辑器均在私有仓库中维护，必须由用户主动导入资料。
@@ -42,8 +45,7 @@ CLI 使用说明见 [cli/README.md](cli/README.md)，捕获、Git 包和设计�
 ```powershell
 cargo test --manifest-path cli/Cargo.toml
 cargo clippy --manifest-path cli/Cargo.toml --all-targets -- -D warnings
-node --test tests/browser-extension-storage.test.mjs
-node --test tests/browser-extension-picker.test.mjs
+node --test --test-concurrency=1 tests/*.mjs
 ```
 
-浏览器扩展目前还需要在 Chrome 中手动完成界面/页面交互验收；尚未实现脚本导入界面或设计画布。付费网页和云端功能不在这个公开仓库中。
+扩展测试包括隔离配置的 Chromium/Edge WebGL 与 Canvas 回归。付费网页和云端功能不在这个公开仓库中。

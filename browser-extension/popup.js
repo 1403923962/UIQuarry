@@ -28,13 +28,15 @@ startButton.addEventListener("click", async () => {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) throw new Error("没有找到当前网页。");
-    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] });
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["canvas-recorder.js", "content.js"] });
     const reply = await chrome.tabs.sendMessage(tab.id, {
       type: "START_PICKER",
       name: $("name").value.trim() || "已捕获组件",
       tags: $("tags").value.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean).slice(0, 20),
       targetSelector: $("target-selector").value.trim(),
-      includeScreenshot: $("include-screenshot").checked
+      includeScreenshot: $("include-screenshot").checked,
+      includeComposite: $("include-composite").checked,
+      recordAnimation: $("record-animation").checked
     });
     if (!reply?.ok) throw new Error(reply?.error || "无法打开元素选择器。");
     $("status").textContent = "选择器已开启。";
@@ -105,9 +107,7 @@ function showDetails(capture) {
     $("canvas-image").src = bitmap.dataUrl;
     $("export-canvas").onclick = async () => {
       try {
-        await chrome.downloads.download({
-          url: bitmap.dataUrl, filename: `${safeFilename(capture.selector)}.png`, saveAs: true, conflictAction: "uniquify"
-        });
+        await downloadDataUrl(bitmap.dataUrl, `${safeFilename(capture.selector)}.png`);
         $("status").textContent = "已开始导出画布 PNG。";
       } catch (error) {
         $("status").textContent = `导出失败：${error.message}`;
@@ -122,6 +122,34 @@ function showDetails(capture) {
   screenshot.hidden = typeof capture.screenshot !== "string";
   screenshot.removeAttribute("src");
   if (!screenshot.hidden) screenshot.src = capture.screenshot;
+  const composite = capture.compositeBitmap?.dataUrl?.startsWith?.("data:image/jpeg;base64,") ? capture.compositeBitmap : null;
+  $("composite-frame").hidden = !composite;
+  $("composite-image").removeAttribute("src");
+  $("export-composite").onclick = null;
+  if (composite) {
+    fields.push(["合成裁切", `${composite.width} × ${composite.height} px`]);
+    $("composite-image").src = composite.dataUrl;
+    $("export-composite").onclick = async () => {
+      try {
+        await downloadDataUrl(composite.dataUrl, `${safeFilename(capture.selector)}-composite.jpg`);
+        $("status").textContent = "已开始导出目标区域合成图。";
+      } catch (error) { $("status").textContent = `导出失败：${error.message}`; }
+    };
+  }
+  const recording = capture.canvasRecording?.dataUrl?.startsWith?.("data:video/webm;base64,") ? capture.canvasRecording : null;
+  $("recording-frame").hidden = !recording;
+  $("recording-video").removeAttribute("src");
+  $("export-recording").onclick = null;
+  if (recording) {
+    fields.push(["录像时长", `${recording.durationMs} ms · WebM`]);
+    $("recording-video").src = recording.dataUrl;
+    $("export-recording").onclick = async () => {
+      try {
+        await downloadDataUrl(recording.dataUrl, `${safeFilename(capture.selector)}-recording.webm`);
+        $("status").textContent = "已开始导出画布 WebM。";
+      } catch (error) { $("status").textContent = `导出失败：${error.message}`; }
+    };
+  }
   $("details").hidden = false;
 }
 
@@ -139,6 +167,23 @@ function deleteLocalCapture(localId, item) {
   chrome.runtime.sendMessage({ type: "DELETE_CAPTURE", localId }, (result) => {
     if (chrome.runtime.lastError || !result?.ok) { $("status").textContent = "删除失败，请重试。"; return; }
     item.remove(); $("details").hidden = true; loadRecent(); $("status").textContent = result.deleted ? "已从本浏览器删除。" : "该捕获已经不存在。";
+  });
+}
+
+function downloadDataUrl(dataUrl, filename) {
+  const comma = dataUrl.indexOf(",");
+  if (comma < 0) return Promise.reject(new Error("媒体文件格式无效"));
+  const mimeType = /^data:([^;,]+);base64$/i.exec(dataUrl.slice(0, comma))?.[1];
+  if (!mimeType) return Promise.reject(new Error("媒体文件格式无效"));
+  const bytes = Uint8Array.from(atob(dataUrl.slice(comma + 1)), char => char.charCodeAt(0));
+  const url = URL.createObjectURL(new Blob([bytes], { type: mimeType }));
+  return new Promise((resolve, reject) => {
+    chrome.downloads.download({ url, filename, saveAs: true, conflictAction: "uniquify" }, id => {
+      const error = chrome.runtime.lastError;
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      if (error || id === undefined) reject(new Error(error?.message || "下载未开始"));
+      else resolve(id);
+    });
   });
 }
 

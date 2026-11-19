@@ -14,6 +14,10 @@ button { width: 100%; margin-top: 15px; padding: 10px; border: 0; border-radius:
 button:hover { background: #1b664b; } button:disabled { opacity: .6; cursor: wait; } button span { margin-right: 5px; font-size: 18px; vertical-align: -1px; }
 button.secondary { margin-top: 8px; color: #28634d; background: #e8f3ed; }
 button.secondary:hover { background: #d9ebdf; }
+.webgl-settings { margin-top: 14px; padding-top: 10px; border-top: 1px solid #e8ede9; }
+.webgl-settings h2 { margin-bottom: 4px; }
+#webgl-status { margin: 0 0 7px; color: #69766f; font-size: 11px; }
+#webgl-reload { margin-left: 5px; }
 #status { min-height: 34px; margin: 9px 0 14px; color: #65716b; font-size: 12px; }
 h2 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: #6e7973; }
 ul { max-height: 130px; overflow: auto; margin: 0; padding: 0; list-style: none; }
@@ -43,3 +47,7 @@ button.capture-action.danger:hover { background: #f9ebea; }
 #canvas-frame { margin: 8px 0; }
 #canvas-frame figcaption { margin-bottom: 4px; color: #53615a; font-size: 12px; }
 #canvas-image { display: block; max-width: 100%; max-height: 160px; margin-bottom: 6px; object-fit: contain; }
+#composite-frame, #recording-frame { margin: 8px 0; }
+#composite-frame[hidden], #recording-frame[hidden] { display: none; }
+#composite-frame figcaption, #recording-frame figcaption { margin-bottom: 4px; color: #53615a; font-size: 12px; }
+#composite-image, #recording-video { display: block; width: 100%; max-height: 160px; margin-bottom: 6px; object-fit: contain; background: #1a1a1a; }

@@ -2,10 +2,16 @@ const MAX_RECENT = 50;
 const MAX_LOCAL_BYTES = 8 * 1024 * 1024;
 const MAX_IMPORTED_BYTES = MAX_LOCAL_BYTES;
 const MAX_SCREENSHOT_CHARS = 7 * 1024 * 1024;
+const MAX_COMPOSITE_CHARS = 3_000_000;
+const MAX_RECORDING_CHARS = 3_000_000;
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "COMPONENT_CAPTURED" && message.capture) {
-    saveCapture(message.capture, message.includeScreenshot === true ? (sender.tab ?? { active: false }) : null).then(sendResponse).catch((error) => {
+    saveCapture(message.capture, {
+      sender,
+      includeScreenshot: message.includeScreenshot === true,
+      includeComposite: message.includeComposite === true
+    }).then(sendResponse).catch((error) => {
       console.error("UIQuarry local save failed", error);
       sendResponse({ ok: false, error: "本地保存失败" });
     });
@@ -30,7 +36,7 @@ async function importCapture(value) {
   const capture = { ...value };
   for (const field of ["id", "createdAt", "localId", "savedAt", "sync", "syncError", "serverId"]) delete capture[field];
   if (storageBytes([capture]) > MAX_IMPORTED_BYTES) return { ok: false, error: "Capture JSON 超过大小上限" };
-  return saveCapture(capture);
+  return saveCapture(capture, { preserveAttachments: true });
 }
 
 function isValidCapture(value) {
@@ -43,6 +49,8 @@ function isValidCapture(value) {
   if (!Array.isArray(value.scripts) || !Array.isArray(value.events) || !value.viewport || !value.bounds) return false;
   if (value.canvasBitmap !== undefined && !validCanvasBitmap(value.canvasBitmap)) return false;
   if (value.screenshot !== undefined && (typeof value.screenshot !== "string" || value.screenshot.length > MAX_SCREENSHOT_CHARS || !/^data:image\/(?:jpeg|png);base64,(?=.+$)(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value.screenshot))) return false;
+  if (value.compositeBitmap !== undefined && !validImageBitmap(value.compositeBitmap, "jpeg", MAX_COMPOSITE_CHARS)) return false;
+  if (value.canvasRecording !== undefined && !validCanvasRecording(value.canvasRecording)) return false;
   if (value.scripts.length > 100 || value.events.length > 1000) return false;
   if (value.tags !== undefined && (!Array.isArray(value.tags) || value.tags.length > 50 || value.tags.some((tag) => typeof tag !== "string" || !tag.trim() || tag.length > 64))) return false;
   if (value.scripts.some((script) => !script || typeof script !== "object" || !["inline", "external", "module", "reference"].includes(script.kind) || typeof script.source !== "string" || script.source.length > 200_000 || typeof script.relation !== "string")) return false;
@@ -57,33 +65,109 @@ function validCanvasBitmap(bitmap) {
       || bitmap.dataUrl.length > 5_000_000) return false;
   if (![bitmap.width, bitmap.height].every(size => Number.isSafeInteger(size) && size > 0)) return false;
   const payload = bitmap.dataUrl.slice(prefix.length);
-  return payload.length > 0 && payload.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(payload);
+  return validBase64(payload);
 }
 
-async function saveCapture(capture, screenshotTab = null) {
+function validImageBitmap(bitmap, format, maxChars) {
+  const prefix = "data:image/" + format + ";base64,";
+  if (!bitmap || Object.keys(bitmap).length !== 3 || typeof bitmap.dataUrl !== "string" || !bitmap.dataUrl.startsWith(prefix)
+      || bitmap.dataUrl.length > maxChars) return false;
+  if (![bitmap.width, bitmap.height].every(size => Number.isSafeInteger(size) && size > 0)) return false;
+  const payload = bitmap.dataUrl.slice(prefix.length);
+  return validBase64(payload);
+}
+
+function validCanvasRecording(recording) {
+  const prefix = "data:video/webm;base64,";
+  if (!recording || Object.keys(recording).length !== 3 || recording.mimeType !== "video/webm"
+      || !Number.isInteger(recording.durationMs) || recording.durationMs < 1 || recording.durationMs > 6000
+      || typeof recording.dataUrl !== "string" || !recording.dataUrl.startsWith(prefix) || recording.dataUrl.length > MAX_RECORDING_CHARS) return false;
+  const payload = recording.dataUrl.slice(prefix.length);
+  return validBase64(payload);
+}
+
+function validBase64(payload) {
+  if (!payload || payload.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(payload)) return false;
+  const padding = payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0;
+  const dataLength = payload.length - padding;
+  return dataLength % 4 === (padding === 0 ? 0 : padding === 1 ? 3 : 2);
+}
+
+async function saveCapture(capture, options = {}) {
   const { captures = [] } = await chrome.storage.local.get({ captures: [] });
   const storedCapture = { ...capture };
-  let screenshotUnavailable = false;
-  if (screenshotTab) {
+  let canvasBitmapUnavailable = false;
+  if (storedCapture.canvasBitmap) {
     try {
-      if (screenshotTab.active !== true || !Number.isInteger(screenshotTab.windowId)) throw new Error("Capture tab is no longer active");
-      const screenshot = await chrome.tabs.captureVisibleTab(screenshotTab.windowId, { format: "jpeg", quality: 78 });
-      if (typeof screenshot !== "string" || !screenshot.startsWith("data:image/jpeg;base64,") || screenshot.length > MAX_SCREENSHOT_CHARS) {
-        throw new Error("Screenshot was not a bounded JPEG data URL");
+      if (!(await canvasBitmapHasVisiblePixels(storedCapture.canvasBitmap))) {
+        delete storedCapture.canvasBitmap;
+        canvasBitmapUnavailable = true;
+        addCaptureNote(storedCapture, "Canvas 导出的像素全透明（WebGL drawing buffer 可能在上屏后已清除）。启用本站 WebGL 保帧并刷新后可重试；也可选合成裁切或录制画布。");
       }
-      storedCapture.screenshot = screenshot;
     } catch (error) {
-      console.warn("UIQuarry viewport screenshot unavailable", error);
-      screenshotUnavailable = true;
+      console.warn("UIQuarry canvas pixel validation unavailable", error);
+    }
+  }
+  let screenshotUnavailable = false;
+  let compositeUnavailable = false;
+  const tab = options.sender?.tab;
+  const wantsScreenshot = options.includeScreenshot === true;
+  const wantsComposite = options.includeComposite === true;
+  if (wantsScreenshot || wantsComposite) {
+    let screenshot;
+    try {
+      if (!tab || tab.active !== true || options.sender?.frameId !== 0 || !Number.isInteger(tab.id) || !Number.isInteger(tab.windowId)) {
+        throw new Error("Capture must originate from the top frame of a browser tab");
+      }
+      const before = await chrome.tabs.query({ active: true, windowId: tab.windowId });
+      if (before[0]?.id !== tab.id || before[0]?.windowId !== tab.windowId) throw new Error("Capture tab is no longer active");
+      screenshot = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 78 });
+      if (typeof screenshot !== "string" || !screenshot.startsWith("data:image/jpeg;base64,")) throw new Error("Visible viewport screenshot is unavailable");
+      const after = await chrome.tabs.query({ active: true, windowId: tab.windowId });
+      if (after[0]?.id !== tab.id || after[0]?.windowId !== tab.windowId) throw new Error("Active tab changed while capturing pixels");
+      if (wantsScreenshot) {
+        if (screenshot.length <= MAX_SCREENSHOT_CHARS) storedCapture.screenshot = screenshot;
+        else {
+          screenshotUnavailable = true;
+          addCaptureNote(storedCapture, "视口截图因超过单项大小限制而未保存。");
+        }
+      }
+    } catch (error) {
+      console.warn("UIQuarry compositor pixels unavailable", error);
+      if (wantsScreenshot) screenshotUnavailable = true;
+      if (wantsComposite) compositeUnavailable = true;
+      if (wantsScreenshot) addCaptureNote(storedCapture, "未能保存视口截图。");
+      if (wantsComposite) addCaptureNote(storedCapture, "未能从浏览器合成画面裁切目标区域。");
+    }
+    if (wantsComposite && screenshot) {
+      try { storedCapture.compositeBitmap = await cropViewport(screenshot, storedCapture.bounds, storedCapture.viewport); }
+      catch (error) {
+        console.warn("UIQuarry compositor crop unavailable", error);
+        compositeUnavailable = true;
+        addCaptureNote(storedCapture, "未能从浏览器合成画面裁切目标区域。");
+      }
     }
   }
   const localRecord = { ...storedCapture, localId: crypto.randomUUID(), savedAt: new Date().toISOString() };
   let screenshotCaptured = Boolean(localRecord.screenshot);
+  let recordingUnavailable = false;
   if (storageBytes([localRecord]) > MAX_LOCAL_BYTES) {
+    if (options.preserveAttachments) return { ok: false, error: "附件会超过本地存储配额；请先删除部分旧捕获或减小文件体积" };
     if (screenshotCaptured) {
       delete localRecord.screenshot;
       screenshotCaptured = false;
       screenshotUnavailable = true;
+      addCaptureNote(localRecord, "视口截图因本地配额被省略。");
+    }
+    if (localRecord.compositeBitmap) {
+      delete localRecord.compositeBitmap;
+      compositeUnavailable = true;
+      addCaptureNote(localRecord, "目标区域合成图因本地配额被省略。");
+    }
+    if (localRecord.canvasRecording) {
+      delete localRecord.canvasRecording;
+      recordingUnavailable = true;
+      addCaptureNote(localRecord, "画布录像因本地配额被省略。");
     }
     if (storageBytes([localRecord]) > MAX_LOCAL_BYTES) return { ok: false, error: "捕获内容超过本地存储上限" };
   }
@@ -96,7 +180,75 @@ async function saveCapture(capture, screenshotTab = null) {
   }
   await chrome.storage.local.set({ captures });
   if (removed.length && originalLength >= MAX_RECENT) console.info(`UIQuarry pruned ${removed.length} older local capture(s) to stay within storage limits.`);
-  return { ok: true, screenshotCaptured, screenshotUnavailable };
+  return {
+    ok: true, screenshotCaptured, screenshotUnavailable, canvasBitmapUnavailable,
+    compositeCaptured: Boolean(localRecord.compositeBitmap), compositeUnavailable,
+    recordingCaptured: Boolean(localRecord.canvasRecording), recordingUnavailable
+  };
+}
+
+async function canvasBitmapHasVisiblePixels(bitmap) {
+  const source = await createImageBitmap(dataUrlToBlob(bitmap.dataUrl));
+  try {
+    const probe = new OffscreenCanvas(32, 32);
+    const context = probe.getContext("2d", { willReadFrequently: true });
+    if (!context) return true;
+    context.clearRect(0, 0, 32, 32);
+    context.drawImage(source, 0, 0, 32, 32);
+    const pixels = context.getImageData(0, 0, 32, 32).data;
+    for (let i = 3; i < pixels.length; i += 4) if (pixels[i] !== 0) return true;
+    return false;
+  } finally {
+    source.close();
+  }
+}
+
+function addCaptureNote(capture, note) {
+  const previous = typeof capture.notes === "string" ? capture.notes.trim() : "";
+  capture.notes = (previous ? previous + " " : "") + note;
+}
+
+async function cropViewport(dataUrl, bounds, viewport) {
+  if (!bounds || !viewport || !Number.isFinite(viewport.width) || !Number.isFinite(viewport.height) || viewport.width <= 0 || viewport.height <= 0) {
+    throw new Error("Selected element has invalid viewport geometry");
+  }
+  const source = await createImageBitmap(dataUrlToBlob(dataUrl));
+  try {
+    const scaleX = source.width / viewport.width;
+    const scaleY = source.height / viewport.height;
+    const x0 = Math.max(0, Math.floor(bounds.x * scaleX));
+    const y0 = Math.max(0, Math.floor(bounds.y * scaleY));
+    const x1 = Math.min(source.width, Math.ceil((bounds.x + bounds.width) * scaleX));
+    const y1 = Math.min(source.height, Math.ceil((bounds.y + bounds.height) * scaleY));
+    const width = x1 - x0;
+    const height = y1 - y0;
+    if (width <= 0 || height <= 0) throw new Error("Selected element is outside the visible viewport");
+    const canvas = new OffscreenCanvas(width, height);
+    const context = canvas.getContext("2d", { alpha: false });
+    if (!context) throw new Error("Cannot create a local pixel crop");
+    context.drawImage(source, x0, y0, width, height, 0, 0, width, height);
+    const blob = await canvas.convertToBlob({ type: "image/jpeg", quality: 0.88 });
+    const dataUrl = await blobToDataUrl(blob);
+    if (dataUrl.length > MAX_COMPOSITE_CHARS) throw new Error("Selected element pixel crop exceeds its size limit");
+    return { width, height, dataUrl };
+  } finally {
+    source.close();
+  }
+}
+
+function dataUrlToBlob(dataUrl) {
+  const comma = dataUrl.indexOf(",");
+  if (comma < 0) throw new Error("Invalid image data URL");
+  const binary = atob(dataUrl.slice(comma + 1));
+  const bytes = Uint8Array.from(binary, char => char.charCodeAt(0));
+  return new Blob([bytes], { type: "image/jpeg" });
+}
+
+async function blobToDataUrl(blob) {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return `data:${blob.type};base64,${btoa(binary)}`;
 }
 
 function storageBytes(value) {

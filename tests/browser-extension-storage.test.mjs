@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { randomUUID, webcrypto } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import vm from "node:vm";
 
 const workerSource = await readFile(new URL("../browser-extension/service-worker.js", import.meta.url), "utf8");
 
-function createHarness({ captureVisibleTab = async () => "data:image/jpeg;base64,dGVzdA==" } = {}) {
+const activeTab = { id: 31, active: true, windowId: 7 };
+const fullJpeg = "data:image/jpeg;base64,/9j/2Q==";
+const croppedJpeg = "data:image/jpeg;base64,/9j/4AAA/9k=";
+
+function createHarness({ captureVisibleTab = async () => fullJpeg, query = async () => [activeTab], media = {} } = {}) {
   const listeners = [];
   let data = { captures: [] };
   const chrome = {
@@ -15,9 +19,10 @@ function createHarness({ captureVisibleTab = async () => "data:image/jpeg;base64
       async get(defaults) { return structuredClone(data.captures ? data : defaults); },
       async set(next) { data = structuredClone(next); }
     } },
-    tabs: { captureVisibleTab }
+    tabs: { captureVisibleTab, query }
   };
-  const context = vm.createContext({ chrome, crypto: { randomUUID }, TextEncoder, console: { ...console, warn() {} }, Date, JSON, Array, Number, String, Object, Promise });
+  const context = vm.createContext({ chrome, crypto: { randomUUID }, TextEncoder, atob, btoa, Blob,
+    console: { ...console, warn() {} }, Date, JSON, Array, Number, String, Object, Promise, ...media });
   vm.runInContext(workerSource, context);
   async function send(message, sender = {}) {
     return new Promise((resolve, reject) => {
@@ -83,28 +88,95 @@ test("opt-in viewport capture stores a JPEG screenshot locally", async () => {
     assert.equal(windowId, 7);
     assert.equal(options.format, "jpeg");
     assert.equal(options.quality, 78);
-    return "data:image/jpeg;base64,dGVzdA==";
+    return fullJpeg;
   } });
-  const result = await app.send({ type: "COMPONENT_CAPTURED", capture: capture(), includeScreenshot: true }, { tab: { active: true, windowId: 7 } });
+  const result = await app.send({ type: "COMPONENT_CAPTURED", capture: capture(), includeScreenshot: true }, { tab: activeTab, frameId: 0 });
   assert.equal(result.ok, true);
   assert.equal(result.screenshotCaptured, true);
   assert.equal(screenshots, 1);
-  assert.equal(app.captures[0].screenshot, "data:image/jpeg;base64,dGVzdA==");
+  assert.equal(app.captures[0].screenshot, fullJpeg);
 });
 
 test("viewport capture is omitted when not requested or unavailable", async () => {
   let screenshots = 0;
   const app = createHarness({ captureVisibleTab: async () => { screenshots++; return "data:image/jpeg;base64,dGVzdA=="; } });
-  const result = await app.send({ type: "COMPONENT_CAPTURED", capture: capture(), includeScreenshot: false }, { tab: { active: true, windowId: 7 } });
+  const result = await app.send({ type: "COMPONENT_CAPTURED", capture: capture(), includeScreenshot: false }, { tab: activeTab, frameId: 0 });
   assert.equal(result.screenshotCaptured, false);
   assert.equal(app.captures[0].screenshot, undefined);
   assert.equal(screenshots, 0);
 
-  const inactive = await app.send({ type: "COMPONENT_CAPTURED", capture: capture(), includeScreenshot: true }, { tab: { active: false, windowId: 7 } });
+  const inactive = await app.send({ type: "COMPONENT_CAPTURED", capture: capture(), includeScreenshot: true }, { tab: { ...activeTab, active: false }, frameId: 0 });
   assert.equal(inactive.ok, true);
   assert.equal(inactive.screenshotUnavailable, true);
   assert.equal(app.captures.length, 2);
   assert.equal(app.captures[0].screenshot, undefined);
+});
+
+test("composite capture crops only selected element pixels using screenshot-to-viewport scale", async () => {
+  let createArgs, drawArgs;
+  class OffscreenCanvas {
+    constructor(width, height) { this.width = width; this.height = height; }
+    getContext(kind) { assert.equal(kind, "2d"); return { drawImage: (...args) => { drawArgs = args; } }; }
+    async convertToBlob(options) { assert.equal(options.type, "image/jpeg"); return new Blob(["crop"], { type: "image/jpeg" }); }
+  }
+  const app = createHarness({ media: {
+    createImageBitmap: async blob => { assert.equal(blob.type, "image/jpeg"); return { width: 2560, height: 1440, close() {} }; },
+    OffscreenCanvas
+  } });
+  const result = await app.send({ type: "COMPONENT_CAPTURED", capture: capture(), includeComposite: true }, { tab: activeTab, frameId: 0 });
+  assert.equal(result.ok, true);
+  assert.equal(result.compositeCaptured, true);
+  assert.equal(result.screenshotCaptured, false);
+  assert.equal(app.captures[0].screenshot, undefined);
+  assert.deepEqual([app.captures[0].compositeBitmap.width, app.captures[0].compositeBitmap.height], [800, 240]);
+  assert.deepEqual(drawArgs.slice(1, 5), [40, 80, 800, 240]);
+  assert.deepEqual(drawArgs.slice(5), [0, 0, 800, 240]);
+});
+
+test("compositor crop refuses an active tab switch before taking pixels", async () => {
+  let screenshotCount = 0;
+  const app = createHarness({
+    query: async () => [{ ...activeTab, id: 99 }],
+    captureVisibleTab: async () => { screenshotCount++; return fullJpeg; }
+  });
+  const result = await app.send({ type: "COMPONENT_CAPTURED", capture: capture(), includeComposite: true }, { tab: activeTab, frameId: 0 });
+  assert.equal(result.ok, true);
+  assert.equal(result.compositeUnavailable, true);
+  assert.equal(app.captures[0].compositeBitmap, undefined);
+  assert.equal(screenshotCount, 0);
+});
+
+test("compositor media is never taken from a nested frame", async () => {
+  let screenshotCount = 0;
+  const app = createHarness({ captureVisibleTab: async () => { screenshotCount++; return fullJpeg; } });
+  const result = await app.send({ type: "COMPONENT_CAPTURED", capture: capture(), includeScreenshot: true }, { tab: activeTab, frameId: 2 });
+  assert.equal(result.ok, true);
+  assert.equal(result.screenshotUnavailable, true);
+  assert.equal(app.captures[0].screenshot, undefined);
+  assert.equal(screenshotCount, 0);
+});
+
+test("invalid imported video, crop, and recording attachments are rejected", async () => {
+  const app = createHarness();
+  for (const invalid of [
+    { compositeBitmap: { width: -1, height: 4, dataUrl: croppedJpeg } },
+    { canvasRecording: { mimeType: "video/webm", durationMs: 6001, dataUrl: "data:video/webm;base64,dGVzdA==" } }
+  ]) {
+    assert.equal((await app.send({ type: "IMPORT_CAPTURE", capture: capture(invalid) })).ok, false);
+  }
+  assert.equal(app.captures.length, 0);
+});
+
+test("local import preserves opt-in compositor and silent canvas recording attachments", async () => {
+  const app = createHarness();
+  const attachments = {
+    compositeBitmap: { width: 640, height: 360, dataUrl: croppedJpeg },
+    canvasRecording: { mimeType: "video/webm", durationMs: 3000, dataUrl: "data:video/webm;base64,dGVzdA==" }
+  };
+  const result = await app.send({ type: "IMPORT_CAPTURE", capture: capture(attachments) });
+  assert.equal(result.ok, true);
+  assert.deepEqual(app.captures[0].compositeBitmap, attachments.compositeBitmap);
+  assert.deepEqual(app.captures[0].canvasRecording, attachments.canvasRecording);
 });
 
 test("import preserves the isolated canvas frame with no screenshot and rejects external bitmap URLs", async () => {
@@ -121,15 +193,53 @@ test("import preserves the isolated canvas frame with no screenshot and rejects 
   assert.equal(app.captures.length, 1);
 });
 
+test("transparent WebGL frame is omitted and recommends the site retention setting", async () => {
+  class OffscreenCanvas {
+    constructor(width, height) { this.width = width; this.height = height; }
+    getContext() { return { clearRect() {}, drawImage() {}, getImageData() { return { data: new Uint8ClampedArray(32 * 32 * 4) }; } }; }
+  }
+  const app = createHarness({ media: {
+    OffscreenCanvas,
+    createImageBitmap: async () => ({ width: 16, height: 16, close() {} })
+  } });
+  const blankFrame = { width: 16, height: 16, dataUrl: "data:image/png;base64,iVBORw0KGgo=" };
+  const result = await app.send({ type: "COMPONENT_CAPTURED", capture: capture({ canvasBitmap: blankFrame }) });
+  assert.equal(result.ok, true);
+  assert.equal(result.canvasBitmapUnavailable, true);
+  assert.equal(app.captures[0].canvasBitmap, undefined);
+  assert.match(app.captures[0].notes, /全透明.*WebGL drawing buffer/);
+});
+
 test("keeps DOM/CSS when a combined screenshot would exceed the local storage budget", async () => {
   const jpeg = `data:image/jpeg;base64,${"A".repeat(7_000_000)}`;
   const app = createHarness({ captureVisibleTab: async () => jpeg });
-  const result = await app.send({ type: "COMPONENT_CAPTURED", capture: capture({ html: "x".repeat(1_500_000) }), includeScreenshot: true }, { tab: { active: true, windowId: 7 } });
+  const result = await app.send({ type: "COMPONENT_CAPTURED", capture: capture({ html: "x".repeat(1_500_000) }), includeScreenshot: true }, { tab: activeTab, frameId: 0 });
   assert.equal(result.ok, true);
   assert.equal(result.screenshotCaptured, false);
   assert.equal(result.screenshotUnavailable, true);
   assert.equal(app.captures[0].html.length, 1_500_000);
   assert.equal(app.captures[0].screenshot, undefined);
+});
+
+test("media quota drops optional pixels before DOM and reports each omitted attachment", async () => {
+  const almostThreeMb = "A".repeat(2_999_976);
+  const mediaCapture = capture({
+    html: "x".repeat(2_000_000),
+    css: "y".repeat(1_000_000),
+    compositeBitmap: { width: 1, height: 1, dataUrl: `data:image/jpeg;base64,${almostThreeMb}` },
+    canvasRecording: { mimeType: "video/webm", durationMs: 3000, dataUrl: `data:video/webm;base64,${almostThreeMb}` }
+  });
+  const app = createHarness();
+  const result = await app.send({ type: "COMPONENT_CAPTURED", capture: mediaCapture, includeScreenshot: true, includeComposite: false }, { tab: activeTab, frameId: 0 });
+  assert.equal(result.ok, true);
+  assert.equal(result.screenshotUnavailable, true);
+  assert.equal(result.compositeUnavailable, true);
+  assert.equal(result.recordingUnavailable, true);
+  assert.equal(app.captures[0].html.length, 2_000_000);
+  assert.equal(app.captures[0].css.length, 1_000_000);
+  assert.equal(app.captures[0].screenshot, undefined);
+  assert.equal(app.captures[0].compositeBitmap, undefined);
+  assert.equal(app.captures[0].canvasRecording, undefined);
 });
 
 test("rejects invalid or oversized capture payloads without changing local storage", async () => {
@@ -143,11 +253,13 @@ test("rejects invalid or oversized capture payloads without changing local stora
   assert.equal(app.captures.length, 0);
 });
 
-test("public extension and CLI contain no automatic upload surface", async () => {
+test("public extension captures locally; broader host access is optional and click-gated", async () => {
   const manifest = JSON.parse(await readFile(new URL("../browser-extension/manifest.json", import.meta.url), "utf8"));
   assert.ok(!manifest.host_permissions);
+  assert.deepEqual(manifest.optional_host_permissions, ["https://*/*", "http://*/*"]);
+  assert.ok(!manifest.permissions.includes("tabs") && !manifest.permissions.includes("tabCapture") && !manifest.permissions.includes("debugger"));
   assert.deepEqual(manifest.permissions, ["activeTab", "scripting", "storage", "downloads"]);
-  assert.ok(!/\bfetch\s*\(|XMLHttpRequest|sendBeacon\s*\(/.test(workerSource));
+  assert.ok(!/fetch\s*\(\s*["']https?:|XMLHttpRequest|sendBeacon\s*\(/.test(workerSource));
   const cli = await readFile(new URL("../cli/src/main.rs", import.meta.url), "utf8");
   assert.ok(!/reqwest|ureq|hyper::Client|TcpStream/.test(cli));
 });

@@ -15,10 +15,19 @@
     <input id="tags" maxlength="300" placeholder="按钮，导航，卡片" autocomplete="off">
     <label for="target-selector">精确定位 <span>可选 · CSS 选择器</span></label>
     <input id="target-selector" maxlength="2048" placeholder="例如 canvas#bg-canvas" autocomplete="off" spellcheck="false">
-    <label class="check-row"><input id="include-screenshot" type="checkbox"><span>额外保存整个可视区域的截图</span></label>
-    <button id="start" type="button"><span aria-hidden="true">⌖</span> 选择网页元素</button>
+    <label class="check-row"><input id="include-screenshot" type="checkbox"><span>保存当前视口全图（可能包含无关内容）</span></label>
+    <label class="check-row"><input id="include-composite" type="checkbox"><span>裁切目标区域合成图（不保存整页）</span></label>
+    <label class="check-row"><input id="record-animation" type="checkbox"><span>录制所选 Canvas（约 3 秒，无音频）</span></label>
+    <p class="privacy-note">录制时保持页面可见。WebGL 黑帧时，请先为该站启用保帧并刷新。</p>
+    <button id="start" type="button"><span aria-hidden="true">⌖</span> 选择网页元素 / Canvas</button>
     <button id="import" class="secondary" type="button">导入 Capture JSON</button>
     <input id="import-file" type="file" accept="application/json,.json" hidden>
+    <section class="webgl-settings" aria-labelledby="webgl-heading">
+      <h2 id="webgl-heading">WebGL 保帧</h2>
+      <p id="webgl-status">正在读取当前站点状态…</p>
+      <button id="webgl-toggle" class="secondary" type="button" disabled>开启当前站点保帧</button>
+      <button id="webgl-reload" class="capture-action" type="button" hidden>刷新当前页面</button>
+    </section>
     <p id="status" role="status">采集内容只保存在本浏览器，不会自动上传。</p>
     <section aria-labelledby="recent-heading">
       <h2 id="recent-heading">最近捕获</h2>
@@ -33,10 +42,21 @@
         <button type="button" id="export-canvas" class="capture-action">导出画布 PNG</button>
       </figure>
       <img id="details-shot" alt="采集时的可视区域截图" hidden>
+      <figure id="composite-frame" hidden>
+        <figcaption>页面合成后的目标区域（截图裁切）</figcaption>
+        <img id="composite-image" alt="屏幕目标区域">
+        <button type="button" id="export-composite" class="capture-action">导出裁切 JPEG</button>
+      </figure>
+      <figure id="recording-frame" hidden>
+        <figcaption>选中的 Canvas 录制</figcaption>
+        <video id="recording-video" controls playsinline></video>
+        <button type="button" id="export-recording" class="capture-action">导出 WebM</button>
+      </figure>
       <pre id="details-preview"></pre>
     </section>
-    <p class="hint">先滚动页面找到目标，左键定点。再用滚轮或 ↑↓ 切层，按 C 直达画布。点击或按 Enter 保存，Esc 重选。</p>
+    <p class="hint">滚动找到目标，左键定点。滚轮或 ↑↓ 切层，C 直达画布；录制结束后保存。Esc 重选位置。</p>
   </main>
+  <script src="popup-webgl.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

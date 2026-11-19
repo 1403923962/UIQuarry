@@ -1,0 +1,35 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Deferred WebGL canvas readback</title>
+<canvas id="baseline" width="8" height="8"></canvas>
+<canvas id="target" width="8" height="8"></canvas>
+<output id="result">PENDING</output>
+<script>
+  // This context predates the shim; creation attributes cannot be changed retroactively.
+  const baseline = document.querySelector("#baseline").getContext("webgl", { preserveDrawingBuffer: false });
+</script>
+<script src="/webgl-preserve.js"></script>
+<script>
+  (async () => {
+    if (!baseline) return "NO_WEBGL";
+    const canvas = document.querySelector("#target");
+    const gl = canvas.getContext("webgl", { preserveDrawingBuffer: false });
+    if (!gl) throw Error("Failed to create second context");
+    if (baseline.getContextAttributes().preserveDrawingBuffer !== false ||
+        gl.getContextAttributes().preserveDrawingBuffer !== true) throw Error("Unexpected context attributes");
+    // Use extrema to avoid precision or color-space rounding depending on the GPU.
+    gl.clearColor(1, 0, 1, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    const png = canvas.toDataURL("image/png");
+    const image = new Image();
+    image.src = png;
+    await image.decode();
+    const probe = document.createElement("canvas");
+    const pixels = probe.getContext("2d");
+    pixels.drawImage(image, 0, 0);
+    const rgba = [...pixels.getImageData(2, 2, 1, 1).data].join(",");
+    return rgba === "255,0,255,255" ? "PASS" : "Wrong pixel: " + rgba;
+  })().then(result => document.querySelector("#result").textContent = result)
+    .catch(error => document.querySelector("#result").textContent = "FAIL: " + error.message);
+</script>

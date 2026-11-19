@@ -1,9 +1,11 @@
 {
   "manifest_version": 3,
   "name": "UIQuarry · 构石",
-  "version": "0.4.1",
+  "version": "0.6.0",
+  "minimum_chrome_version": "113",
   "description": "在浏览器本地采集、预览和导出网页组件。",
   "permissions": ["activeTab", "scripting", "storage", "downloads"],
+  "optional_host_permissions": ["https://*/*", "http://*/*"],
   "background": { "service_worker": "service-worker.js" },
   "action": { "default_popup": "popup.html", "default_title": "用 UIQuarry 采集组件" }
 }

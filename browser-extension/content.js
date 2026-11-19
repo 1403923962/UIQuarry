@@ -144,7 +144,7 @@
       refresh(point.x, point.y);
     }
 
-    function confirm() {
+    async function confirm() {
       const node = layers[index];
       if (!node) return;
       finish();
@@ -154,15 +154,43 @@
       }
       try {
         const capture = createCapture(node, metadata);
-        chrome.runtime.sendMessage({ type: "COMPONENT_CAPTURED", capture, includeScreenshot: metadata.includeScreenshot === true }, (result) => {
+        let recordingStatus = "";
+        if (metadata.recordAnimation === true && node instanceof HTMLCanvasElement) {
+          try {
+            if (!globalThis.UIQuarryRecorder) throw new Error("录制器尚未加载");
+            showToast("正在录制 Canvas 约 3 秒，请保持页面可见；需要鼠标响应时可移动指针。");
+            capture.canvasRecording = await globalThis.UIQuarryRecorder.record(node);
+          } catch (error) {
+            capture.notes += ` 画布录制失败：${error.message}`;
+            recordingStatus = `（录像未保存：${error.message}）`;
+          }
+        } else if (metadata.recordAnimation === true) {
+          capture.notes += " 已请求动效录制，但所选元素不是 HTML Canvas，未录制。";
+          recordingStatus = "（此元素不是 Canvas，未录制）";
+        }
+        const latestRect = node.getBoundingClientRect();
+        capture.viewport = { width: innerWidth, height: innerHeight, deviceScaleFactor: devicePixelRatio || 1 };
+        capture.bounds = { x: round(latestRect.x), y: round(latestRect.y), width: round(latestRect.width), height: round(latestRect.height) };
+        chrome.runtime.sendMessage({
+          type: "COMPONENT_CAPTURED",
+          capture,
+          includeScreenshot: metadata.includeScreenshot === true,
+          includeComposite: metadata.includeComposite === true
+        }, (result) => {
           if (chrome.runtime.lastError || !result?.ok) {
             showToast(result?.error ? `保存失败：${result.error}` : "保存失败，请重试");
             return;
           }
           let message = "已保存到本机 UIQuarry 库";
-          if (node.localName === "canvas") message = capture.canvasBitmap ? "已保存 Canvas 元素及其独立画面" : "已保存 Canvas 结构，画布像素不可用";
+          if (node.localName === "canvas") message = result.canvasBitmapUnavailable
+            ? "已保存 Canvas 结构；帧全透明，请为本站开启 WebGL 保帧后刷新重试"
+            : capture.canvasBitmap ? "已保存 Canvas 元素及其独立画面" : "已保存 Canvas 结构，画布像素不可用";
           if (result.screenshotUnavailable) message += "（可视区域截图不可用）";
           else if (result.screenshotCaptured) message += "（含可视区域截图）";
+          if (result.compositeUnavailable) message += "（裁切截图不可用）";
+          else if (result.compositeCaptured) message += "（含目标区域合成图）";
+          if (result.recordingUnavailable) message += "（录像因本地存储空间被省略）";
+          message += recordingStatus;
           showToast(message);
         });
       } catch (error) {
