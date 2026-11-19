@@ -191,6 +191,28 @@ test("local import preserves opt-in compositor and silent canvas recording attac
   assert.deepEqual(app.captures[0].canvasRecording, attachments.canvasRecording);
 });
 
+test("animation observations import as bounded data, while unsafe keyframe values are rejected", async () => {
+  const validAnimation = {
+    targetId: "q0", kind: "CSSTransition", playState: "running", currentTime: 80,
+    playbackRate: 1, timelineType: "document",
+    timing: { delay: 0, duration: 300, endDelay: 0, iterations: 1, direction: "normal", easing: "ease", fill: "both" },
+    keyframes: [
+      { offset: 0, properties: { opacity: 0, transform: "translateX(0px)" } },
+      { offset: 1, properties: { opacity: 1, transform: "translateX(8px)" } }
+    ]
+  };
+  const app = createHarness();
+  const result = await app.send({ type: "IMPORT_CAPTURE", capture: capture({ animations: [validAnimation] }) });
+  assert.equal(result.ok, true);
+  assert.deepEqual(app.captures[0].animations, [validAnimation]);
+
+  const invalid = await app.send({ type: "IMPORT_CAPTURE", capture: capture({
+    animations: [{ ...validAnimation, keyframes: [{ properties: { background: "url(https://example.test/pixel)" } }] }]
+  }) });
+  assert.equal(invalid.ok, false);
+  assert.equal(app.captures.length, 1);
+});
+
 test("import preserves the isolated canvas frame with no screenshot and rejects external bitmap URLs", async () => {
   const app = createHarness();
   const bitmap = { width: 1, height: 1, dataUrl: "data:image/png;base64,iVBORw0KGgo=" };

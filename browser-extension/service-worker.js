@@ -58,6 +58,7 @@ function isValidCapture(value) {
   if (value.screenshot !== undefined && (typeof value.screenshot !== "string" || value.screenshot.length > MAX_SCREENSHOT_CHARS || !/^data:image\/(?:jpeg|png);base64,(?=.+$)(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value.screenshot))) return false;
   if (value.compositeBitmap !== undefined && !validImageBitmap(value.compositeBitmap, "jpeg", MAX_COMPOSITE_CHARS)) return false;
   if (value.canvasRecording !== undefined && !validCanvasRecording(value.canvasRecording)) return false;
+  if (value.animations !== undefined && !validAnimations(value.animations)) return false;
   if (value.scripts.length > 100 || value.events.length > 1000) return false;
   if (value.tags !== undefined && (!Array.isArray(value.tags) || value.tags.length > 50 || value.tags.some((tag) => typeof tag !== "string" || !tag.trim() || tag.length > 64))) return false;
   if (value.scripts.some((script) => !script || typeof script !== "object" || !["inline", "external", "module", "reference"].includes(script.kind) || typeof script.source !== "string" || script.source.length > 200_000 || typeof script.relation !== "string")) return false;
@@ -91,6 +92,43 @@ function validCanvasRecording(recording) {
       || typeof recording.dataUrl !== "string" || !recording.dataUrl.startsWith(prefix) || recording.dataUrl.length > MAX_RECORDING_CHARS) return false;
   const payload = recording.dataUrl.slice(prefix.length);
   return validBase64(payload);
+}
+
+function validAnimations(animations) {
+  const kindSet = new Set(["CSSAnimation", "CSSTransition", "Animation"]);
+  const playStates = new Set(["pending", "running", "paused", "finished"]);
+  const timelines = new Set(["document", "scroll", "other", "unknown"]);
+  const directions = new Set(["normal", "reverse", "alternate", "alternate-reverse"]);
+  const fills = new Set(["none", "forwards", "backwards", "both", "auto"]);
+  const composites = new Set(["auto", "replace", "add", "accumulate"]);
+  const allowedTiming = new Set(["delay", "duration", "endDelay", "iterations", "direction", "easing", "fill"]);
+  if (!Array.isArray(animations) || animations.length > 32 || storageBytes(animations) > 256 * 1024) return false;
+  return animations.every(animation => {
+    if (!animation || typeof animation !== "object" || Array.isArray(animation)) return false;
+    const required = ["targetId", "kind", "playState", "playbackRate", "timelineType", "timing", "keyframes"];
+    if (required.some(key => !(key in animation)) || Object.keys(animation).some(key => ![...required, "pseudoElement", "currentTime"].includes(key))) return false;
+    if (typeof animation.targetId !== "string" || !animation.targetId || animation.targetId.length > 128 || !kindSet.has(animation.kind)) return false;
+    if (animation.pseudoElement !== undefined && (typeof animation.pseudoElement !== "string" || animation.pseudoElement.length > 32)) return false;
+    if (!playStates.has(animation.playState) || !Number.isFinite(animation.playbackRate) || !timelines.has(animation.timelineType)) return false;
+    if (animation.currentTime !== undefined && animation.currentTime !== null && !Number.isFinite(animation.currentTime)) return false;
+
+    const timing = animation.timing;
+    if (!timing || typeof timing !== "object" || Array.isArray(timing) || Object.keys(timing).some(key => !allowedTiming.has(key)) || [...allowedTiming].some(key => !(key in timing))) return false;
+    if (!Number.isFinite(timing.delay) || !Number.isFinite(timing.endDelay) || !(timing.duration === "auto" || Number.isFinite(timing.duration) && timing.duration >= 0)) return false;
+    if (!(timing.iterations === "infinite" || Number.isFinite(timing.iterations) && timing.iterations >= 0) || !directions.has(timing.direction)) return false;
+    if (typeof timing.easing !== "string" || timing.easing.length > 128 || !fills.has(timing.fill)) return false;
+
+    if (!Array.isArray(animation.keyframes) || animation.keyframes.length > 32) return false;
+    return animation.keyframes.every(frame => {
+      if (!frame || typeof frame !== "object" || Array.isArray(frame) || !frame.properties || typeof frame.properties !== "object" || Array.isArray(frame.properties)) return false;
+      if (Object.keys(frame).some(key => !["offset", "easing", "composite", "properties"].includes(key)) || Object.keys(frame.properties).length > 24) return false;
+      if (frame.offset !== undefined && frame.offset !== null && (!Number.isFinite(frame.offset) || frame.offset < 0 || frame.offset > 1)) return false;
+      if (frame.easing !== undefined && (typeof frame.easing !== "string" || frame.easing.length > 128)) return false;
+      if (frame.composite !== undefined && !composites.has(frame.composite)) return false;
+      return Object.entries(frame.properties).every(([property, value]) => /^-?[a-z][a-z0-9-]{0,80}$/.test(property) && !property.startsWith("--") && !["content", "behavior", "-moz-binding"].includes(property) &&
+        (value === null || Number.isFinite(value) || typeof value === "string" && value.length <= 256 && !/url\s*\(/i.test(value)));
+    });
+  });
 }
 
 function validBase64(payload) {

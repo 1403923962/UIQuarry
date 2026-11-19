@@ -15,6 +15,7 @@
     <input id="tags" maxlength="300" placeholder="按钮，导航，卡片" autocomplete="off">
     <label for="target-selector">精确定位 <span>可选 · CSS 选择器</span></label>
     <input id="target-selector" maxlength="2048" placeholder="例如 canvas#bg-canvas" autocomplete="off" spellcheck="false">
+    <label class="check-row"><input id="include-animations" type="checkbox"><span>读取当前 CSS/WAAPI 动画关键帧（只读，不是源码）</span></label>
     <label class="check-row"><input id="include-screenshot" type="checkbox"><span>保存当前视口全图（可能包含无关内容）</span></label>
     <label class="check-row"><input id="include-composite" type="checkbox"><span>裁切目标区域合成图（不保存整页）</span></label>
     <label class="check-row"><input id="record-animation" type="checkbox"><span>录制所选 Canvas（约 3 秒，无音频）</span></label>
@@ -52,6 +53,10 @@
         <video id="recording-video" controls playsinline></video>
         <button type="button" id="export-recording" class="capture-action">导出 WebM</button>
       </figure>
+      <details id="animations-frame" hidden>
+        <summary id="animations-summary">DOM 动画关键帧</summary>
+        <pre id="animations-preview"></pre>
+      </details>
       <pre id="details-preview"></pre>
     </section>
     <p class="hint">滚动找到目标，左键定点。滚轮或 ↑↓ 切层，C 直达画布；录制结束后保存。Esc 重选位置。</p>

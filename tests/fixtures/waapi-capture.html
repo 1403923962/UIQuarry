@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Read-only WAAPI capture regression</title>
+<style>
+  @keyframes pulse {
+    from { opacity: .35; transform: translateX(0px) scale(.8); }
+    to { opacity: 1; transform: translateX(32px) scale(1.1); }
+  }
+  #target { width: 120px; height: 80px; background: #168b65; animation: pulse 1200ms ease-in-out infinite alternate; }
+</style>
+<div id="target"></div>
+<output id="result">PENDING</output>
+<script>
+  let onMessage;
+  const messages = [];
+  Object.defineProperty(chrome, "runtime", { value: {
+    onMessage: { addListener(callback) { onMessage = callback; } },
+    sendMessage(message, respond) { messages.push(message); respond({ ok: true }); }
+  } });
+</script>
+<script src="/content.js"></script>
+<script>
+  async function run() {
+    const target = document.querySelector("#target");
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    let started;
+    onMessage({
+      type: "START_PICKER", targetSelector: "#target", name: "Pulse", tags: [],
+      includeAnimations: true, includeScreenshot: false, includeComposite: false
+    }, {}, value => { started = value; });
+    if (!started?.ok) throw Error(started?.error || "Picker failed to start");
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    const capture = messages.at(-1)?.capture;
+    if (!capture) throw Error("No capture payload was sent");
+    if (!Array.isArray(capture.animations) || !capture.animations.length) throw Error("Active CSS keyframes were not captured");
+    const animation = capture.animations.find(item => item.targetId === "q0");
+    if (!animation) throw Error("WAAPI effect does not map to the Capture DOM node ID");
+    if (!animation.keyframes.some(frame => Number.isFinite(frame.offset) && Object.keys(frame.properties).length > 0)) throw Error("No sampled keyframe properties");
+    if (animation.kind !== "CSSAnimation" || animation.timing.duration !== 1200) throw Error("CSS animation metadata mismatch");
+    if (capture.scripts.length || capture.events.length) throw Error("Animation metadata was incorrectly emitted as executable source or user events");
+    if (target.style.animationPlayState !== "") throw Error("Page animation state was mutated");
+  }
+  run().then(() => { document.querySelector("#result").textContent = "PASS"; })
+       .catch(error => { document.querySelector("#result").textContent = "FAIL: " + error.message; });
+</script>
+</html>

@@ -46,6 +46,12 @@
         }
       }
     },
+    "animations": {
+      "type": "array",
+      "maxItems": 32,
+      "description": "Bounded Web Animations API observations for the selected subtree. The offline CLI caps this property's serialized JSON at 262144 bytes. These are sampled timing and keyframe values, not JavaScript source or a replay guarantee.",
+      "items": {"$ref": "#/$defs/animation"}
+    },
     "viewport": {"$ref": "#/$defs/size"},
     "bounds": {"$ref": "#/$defs/rect"},
     "canvasBitmap": {
@@ -102,6 +108,58 @@
     "notes": {"type": "string", "maxLength": 4000}
   },
   "$defs": {
+    "animation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["targetId", "kind", "playState", "playbackRate", "timelineType", "timing", "keyframes"],
+      "properties": {
+        "targetId": {"type": "string", "minLength": 1, "maxLength": 128},
+        "kind": {"enum": ["CSSAnimation", "CSSTransition", "Animation"]},
+        "pseudoElement": {"type": "string", "maxLength": 32},
+        "playState": {"enum": ["pending", "running", "paused", "finished"]},
+        "currentTime": {"type": ["number", "null"]},
+        "playbackRate": {"type": "number"},
+        "timelineType": {"enum": ["document", "scroll", "other", "unknown"]},
+        "timing": {"$ref": "#/$defs/animationTiming"},
+        "keyframes": {"type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/keyframe"}}
+      }
+    },
+    "animationTiming": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["delay", "duration", "endDelay", "iterations", "direction", "easing", "fill"],
+      "properties": {
+        "delay": {"type": "number"},
+        "duration": {"oneOf": [{"type": "number", "minimum": 0}, {"const": "auto"}]},
+        "endDelay": {"type": "number"},
+        "iterations": {"oneOf": [{"type": "number", "minimum": 0}, {"const": "infinite"}]},
+        "direction": {"enum": ["normal", "reverse", "alternate", "alternate-reverse"]},
+        "easing": {"type": "string", "maxLength": 128},
+        "fill": {"enum": ["none", "forwards", "backwards", "both", "auto"]}
+      }
+    },
+    "keyframe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["properties"],
+      "properties": {
+        "offset": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "easing": {"type": "string", "maxLength": 128},
+        "composite": {"enum": ["auto", "replace", "add", "accumulate"]},
+        "properties": {
+          "type": "object",
+          "maxProperties": 24,
+          "propertyNames": {"pattern": "^(?!--)(?!content$)(?!behavior$)(?!-moz-binding$)-?[a-z][a-z0-9-]*$"},
+          "additionalProperties": {
+            "anyOf": [
+              {"type": "string", "maxLength": 256, "not": {"pattern": "[uU][rR][lL]\\s*\\("}},
+              {"type": "number"},
+              {"type": "null"}
+            ]
+          }
+        }
+      }
+    },
     "size": {
       "type": "object", "additionalProperties": false, "required": ["width", "height"],
       "properties": {"width": {"type": "number", "minimum": 0}, "height": {"type": "number", "minimum": 0}, "deviceScaleFactor": {"type": "number", "exclusiveMinimum": 0}}

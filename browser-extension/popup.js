@@ -34,6 +34,7 @@ startButton.addEventListener("click", async () => {
       name: $("name").value.trim() || "已捕获组件",
       tags: $("tags").value.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean).slice(0, 20),
       targetSelector: $("target-selector").value.trim(),
+      includeAnimations: $("include-animations").checked,
       includeScreenshot: $("include-screenshot").checked,
       includeComposite: $("include-composite").checked,
       recordAnimation: $("record-animation").checked
@@ -149,6 +150,10 @@ function showDetails(capture) {
       } catch (error) { $("status").textContent = `导出失败：${error.message}`; }
     };
   }
+  const animations = Array.isArray(capture.animations) ? capture.animations : [];
+  $("animations-frame").hidden = animations.length === 0;
+  $("animations-preview").textContent = animations.length ? JSON.stringify(animations, null, 2) : "";
+  $("animations-summary").textContent = `DOM 动画观察 · ${animations.length} 条（不含动画实现代码）`;
   list.replaceChildren();
   for (const [label, value] of fields) {
     const term = document.createElement("dt");

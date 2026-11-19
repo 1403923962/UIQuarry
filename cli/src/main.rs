@@ -19,6 +19,7 @@ const MAX_SCREENSHOT_CHARS: usize = 10_000_000;
 const MAX_CANVAS_BITMAP_CHARS: usize = 5_000_000;
 const MAX_COMPOSITE_BITMAP_CHARS: usize = 3_000_000;
 const MAX_CANVAS_RECORDING_CHARS: usize = 3_000_000;
+const MAX_ANIMATION_BYTES: usize = 256 * 1024;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -209,6 +210,9 @@ fn validate_capture(value: &Value) -> Result<()> {
     if let Some(recording) = value.get("canvasRecording") {
         validate_canvas_recording(recording)?;
     }
+    if let Some(animations) = value.get("animations") {
+        validate_animations(animations)?;
+    }
     if let Some(tags) = value.get("tags") {
         let tags = tags
             .as_array()
@@ -295,6 +299,227 @@ fn validate_capture(value: &Value) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn validate_animations(value: &Value) -> Result<()> {
+    let serialized = serde_json::to_vec(value)?;
+    if serialized.len() > MAX_ANIMATION_BYTES {
+        bail!("capture animations exceed the 256 KiB serialized size limit")
+    }
+    let animations = value
+        .as_array()
+        .ok_or_else(|| anyhow!("capture animations must be an array"))?;
+    if animations.len() > 32 {
+        bail!("capture may contain at most 32 animations")
+    }
+
+    for animation in animations {
+        let fields = animation
+            .as_object()
+            .ok_or_else(|| anyhow!("capture animation must be an object"))?;
+        ensure_allowed_keys(
+            fields,
+            "animation",
+            &[
+                "targetId",
+                "kind",
+                "pseudoElement",
+                "playState",
+                "currentTime",
+                "playbackRate",
+                "timelineType",
+                "timing",
+                "keyframes",
+            ],
+        )?;
+        animation["targetId"]
+            .as_str()
+            .filter(|text| !text.is_empty() && text.chars().count() <= 128)
+            .ok_or_else(|| anyhow!("animation targetId must be a non-empty string of at most 128 characters"))?;
+        if !matches!(
+            animation["kind"].as_str(),
+            Some("CSSAnimation" | "CSSTransition" | "Animation")
+        ) {
+            bail!("animation kind is unsupported")
+        }
+        if animation
+            .get("pseudoElement")
+            .is_some_and(|value| value.as_str().is_none_or(|text| text.chars().count() > 32))
+        {
+            bail!("animation pseudoElement must be a string of at most 32 characters")
+        }
+        if !matches!(
+            animation["playState"].as_str(),
+            Some("pending" | "running" | "paused" | "finished")
+        ) {
+            bail!("animation playState is unsupported")
+        }
+        if animation
+            .get("currentTime")
+            .is_some_and(|value| !value.is_null() && value.as_f64().is_none_or(|number| !number.is_finite()))
+        {
+            bail!("animation currentTime must be a finite number or null")
+        }
+        if animation["playbackRate"]
+            .as_f64()
+            .is_none_or(|number| !number.is_finite())
+        {
+            bail!("animation playbackRate must be finite")
+        }
+        if !matches!(
+            animation["timelineType"].as_str(),
+            Some("document" | "scroll" | "other" | "unknown")
+        ) {
+            bail!("animation timelineType is unsupported")
+        }
+
+        validate_animation_timing(&animation["timing"])?;
+        let keyframes = animation["keyframes"]
+            .as_array()
+            .ok_or_else(|| anyhow!("animation keyframes must be an array"))?;
+        if keyframes.len() > 32 {
+            bail!("animation may contain at most 32 keyframes")
+        }
+        for keyframe in keyframes {
+            validate_keyframe(keyframe)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_animation_timing(value: &Value) -> Result<()> {
+    let fields = value
+        .as_object()
+        .ok_or_else(|| anyhow!("animation timing must be an object"))?;
+    ensure_allowed_keys(
+        fields,
+        "animation timing",
+        &[
+            "delay",
+            "duration",
+            "endDelay",
+            "iterations",
+            "direction",
+            "easing",
+            "fill",
+        ],
+    )?;
+    for field in ["delay", "endDelay"] {
+        if value[field].as_f64().is_none_or(|number| !number.is_finite()) {
+            bail!("animation timing {field} must be finite")
+        }
+    }
+    match &value["duration"] {
+        Value::String(text) if text == "auto" => {}
+        Value::Number(_)
+            if value["duration"]
+                .as_f64()
+                .is_some_and(|number| number.is_finite() && number >= 0.0) => {}
+        _ => bail!("animation timing duration must be a non-negative number or 'auto'"),
+    }
+    match &value["iterations"] {
+        Value::String(text) if text == "infinite" => {}
+        Value::Number(_)
+            if value["iterations"]
+                .as_f64()
+                .is_some_and(|number| number.is_finite() && number >= 0.0) => {}
+        _ => bail!("animation timing iterations must be a non-negative number or 'infinite'"),
+    }
+    if !matches!(
+        value["direction"].as_str(),
+        Some("normal" | "reverse" | "alternate" | "alternate-reverse")
+    ) {
+        bail!("animation timing direction is unsupported")
+    }
+    if value["easing"].as_str().is_none_or(|text| text.chars().count() > 128) {
+        bail!("animation timing easing must be a string of at most 128 characters")
+    }
+    if !matches!(
+        value["fill"].as_str(),
+        Some("none" | "forwards" | "backwards" | "both" | "auto")
+    ) {
+        bail!("animation timing fill is unsupported")
+    }
+    Ok(())
+}
+
+fn validate_keyframe(value: &Value) -> Result<()> {
+    let fields = value
+        .as_object()
+        .ok_or_else(|| anyhow!("animation keyframe must be an object"))?;
+    ensure_allowed_keys(
+        fields,
+        "animation keyframe",
+        &["offset", "easing", "composite", "properties"],
+    )?;
+    if value.get("offset").is_some_and(|offset| {
+        !offset.is_null()
+            && offset
+                .as_f64()
+                .is_none_or(|number| !number.is_finite() || !(0.0..=1.0).contains(&number))
+    }) {
+        bail!("animation keyframe offset must be between 0 and 1 or null")
+    }
+    if value
+        .get("easing")
+        .is_some_and(|easing| easing.as_str().is_none_or(|text| text.chars().count() > 128))
+    {
+        bail!("animation keyframe easing must be a string of at most 128 characters")
+    }
+    if value
+        .get("composite")
+        .is_some_and(|composite| !matches!(composite.as_str(), Some("auto" | "replace" | "add" | "accumulate")))
+    {
+        bail!("animation keyframe composite is unsupported")
+    }
+    let properties = value["properties"]
+        .as_object()
+        .ok_or_else(|| anyhow!("animation keyframe properties must be an object"))?;
+    if properties.len() > 24 {
+        bail!("animation keyframe may contain at most 24 CSS properties")
+    }
+    for (name, property_value) in properties {
+        if !is_safe_animation_property(name) {
+            bail!("animation keyframe contains an unsafe CSS property name")
+        }
+        match property_value {
+            Value::String(text) if text.chars().count() <= 256 && !text.to_ascii_lowercase().contains("url") => {}
+            Value::Number(_) if property_value.as_f64().is_some_and(f64::is_finite) => {}
+            Value::Null => {}
+            Value::String(_) => bail!("animation CSS values must be at most 256 characters and must not contain URLs"),
+            _ => bail!("animation CSS values must be strings, finite numbers, or null"),
+        }
+    }
+    Ok(())
+}
+
+fn ensure_allowed_keys(fields: &serde_json::Map<String, Value>, label: &str, allowed: &[&str]) -> Result<()> {
+    if fields.keys().any(|key| !allowed.contains(&key.as_str())) {
+        bail!("{label} contains an unsupported field")
+    }
+    Ok(())
+}
+
+fn is_safe_animation_property(name: &str) -> bool {
+    let name = name.as_bytes();
+    let Some(first) = name.first() else {
+        return false;
+    };
+    let property = std::str::from_utf8(name).unwrap_or_default();
+    if property.len() > 64 || property.starts_with("--") || matches!(property, "content" | "behavior" | "-moz-binding")
+    {
+        return false;
+    }
+    let body = if *first == b'-' {
+        &name[1..]
+    } else {
+        name
+    };
+    !body.is_empty()
+        && body[0].is_ascii_lowercase()
+        && body
+            .iter()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'-')
 }
 
 fn validate_screenshot_data_url(value: &str) -> Result<()> {
@@ -815,6 +1040,119 @@ mod tests {
         let mut value = capture();
         value.as_object_mut().unwrap().remove("tags");
         assert!(validate_capture(&value).is_ok());
+    }
+
+    fn sample_animations() -> Value {
+        json!([{
+            "targetId": "quarry-target-1",
+            "kind": "CSSAnimation",
+            "pseudoElement": "::before",
+            "playState": "running",
+            "currentTime": 420,
+            "playbackRate": 1,
+            "timelineType": "document",
+            "timing": {
+                "delay": 0,
+                "duration": 800,
+                "endDelay": 0,
+                "iterations": 1,
+                "direction": "normal",
+                "easing": "ease-out",
+                "fill": "both"
+            },
+            "keyframes": [
+                {"offset": 0, "easing": "ease-out", "composite": "replace", "properties": {"opacity": 0, "transform": "translateY(8px)"}},
+                {"offset": 1, "easing": "linear", "composite": "replace", "properties": {"opacity": 1, "transform": "translateY(0px)"}}
+            ]
+        }])
+    }
+
+    #[test]
+    fn accepts_optional_animation_observations_and_legacy_captures() {
+        let mut value = capture();
+        assert!(validate_capture(&value).is_ok());
+        value["animations"] = sample_animations();
+        assert!(validate_capture(&value).is_ok());
+
+        value["animations"][0]["currentTime"] = Value::Null;
+        value["animations"][0]["timing"]["duration"] = json!("auto");
+        value["animations"][0]["timing"]["iterations"] = json!("infinite");
+        value["animations"][0]["timelineType"] = json!("scroll");
+        assert!(validate_capture(&value).is_ok());
+    }
+
+    #[test]
+    fn rejects_unsafe_or_malformed_animation_metadata() {
+        let mut value = capture();
+        let valid = sample_animations();
+        for invalid in [
+            json!([{"targetId":"", "playState":"running", "playbackRate":1, "timelineType":"document", "timing":{}, "keyframes":[]}]),
+            json!([{"targetId":"x", "playState":"running", "playbackRate":1, "timelineType":"document", "timing":{"delay":0,"duration":0,"endDelay":0,"iterations":1,"direction":"normal","easing":"linear","fill":"none","extra":true}, "keyframes":[]}]),
+            json!([{"targetId":"x", "playState":"running", "currentTime":"1", "playbackRate":1, "timelineType":"document", "timing":{"delay":0,"duration":0,"endDelay":0,"iterations":1,"direction":"normal","easing":"linear","fill":"none"}, "keyframes":[]}]),
+            json!([{"targetId":"x", "playState":"running", "playbackRate":1, "timelineType":"document", "timing":{"delay":0,"duration":0,"endDelay":0,"iterations":1,"direction":"normal","easing":"linear","fill":"none"}, "keyframes":[{"properties":{"--custom":"red"}}]}]),
+            json!([{"targetId":"x", "playState":"running", "playbackRate":1, "timelineType":"document", "timing":{"delay":0,"duration":0,"endDelay":0,"iterations":1,"direction":"normal","easing":"linear","fill":"none"}, "keyframes":[{"properties":{"content":"url(https://example.com/x)"}}]}]),
+            json!([{"targetId":"x", "playState":"running", "playbackRate":1, "timelineType":"document", "timing":{"delay":0,"duration":0,"endDelay":0,"iterations":1,"direction":"normal","easing":"linear","fill":"none"}, "keyframes":[{"offset":1.1,"properties":{}}]}]),
+        ] {
+            value["animations"] = invalid;
+            assert!(validate_capture(&value).is_err());
+        }
+
+        value["animations"] = valid;
+        value["animations"][0]["keyframes"][0]["properties"]["background-image"] =
+            json!("linear-gradient(red, blue) url(https://example.com/image.png)");
+        assert!(validate_capture(&value).is_err());
+    }
+
+    #[test]
+    fn enforces_animation_count_frame_property_and_serialized_size_limits() {
+        let mut value = capture();
+        value["animations"] = json!(vec![sample_animations()[0].clone(); 33]);
+        assert!(validate_capture(&value)
+            .unwrap_err()
+            .to_string()
+            .contains("32 animations"));
+
+        value["animations"] = sample_animations();
+        value["animations"][0]["keyframes"] = json!(vec![json!({"properties": {}}); 33]);
+        assert!(validate_capture(&value)
+            .unwrap_err()
+            .to_string()
+            .contains("32 keyframes"));
+
+        value["animations"] = sample_animations();
+        let properties: serde_json::Map<String, Value> =
+            (0..25).map(|index| (format!("prop-{index}"), json!("value"))).collect();
+        value["animations"][0]["keyframes"][0]["properties"] = Value::Object(properties);
+        assert!(validate_capture(&value)
+            .unwrap_err()
+            .to_string()
+            .contains("24 CSS properties"));
+
+        let properties: serde_json::Map<String, Value> = (0..24)
+            .map(|index| (format!("prop-{index}"), json!("x".repeat(256))))
+            .collect();
+        let frame = json!({"properties": properties});
+        let animation = sample_animations()[0].clone();
+        let mut animation = animation;
+        animation["keyframes"] = json!(vec![frame; 32]);
+        value["animations"] = json!(vec![animation; 32]);
+        assert!(validate_capture(&value).unwrap_err().to_string().contains("256 KiB"));
+    }
+
+    #[test]
+    fn animation_observations_survive_package_roundtrip() {
+        let dir = tempdir().unwrap();
+        let input = dir.path().join("input.json");
+        let package = dir.path().join("package");
+        let mut value = capture();
+        value["animations"] = sample_animations();
+        fs::write(&input, serde_json::to_vec(&value).unwrap()).unwrap();
+        create_capture_package(&input, &package, "demo/animated-card").unwrap();
+        validate_package(&package).unwrap();
+        let stored: Value =
+            serde_json::from_slice(&fs::read(package.join("captures/demo/animated-card/capture.json")).unwrap())
+                .unwrap();
+        assert_eq!(stored["animations"], value["animations"]);
     }
 
     #[test]

@@ -30,7 +30,7 @@ This is an explicit limit: exact bidirectional mapping between unconstrained Jav
 
 ## Capture and privacy boundaries
 
-Capture only the selected node, bounded relevant ancestors/descendants, visible computed styles, viewport and bounds, source URL, and user-triggered interaction states. Sanitize scripts, form values, event handlers, hidden content, and dangerous URLs from the HTML snapshot. Do not collect whole-page script sources by default. When script recording is added, it must be an explicit user action scoped to a selected source, carry provenance/hash/license, and be visible in the export review.
+Capture only the selected node, bounded relevant ancestors/descendants, visible computed styles, viewport and bounds, source URL, and user-triggered interaction states. Sanitize scripts, form values, event handlers, hidden content, and dangerous URLs from the HTML snapshot. Do not collect whole-page script sources by default. Optional Web Animations API metadata records bounded timing and keyframe observations only; it does not recover JavaScript, shader source, event logic, or guarantee replay. When script recording is added, it must be an explicit user action scoped to a selected source, carry provenance/hash/license, and be visible in the export review.
 
 Before publishing a package, show source and license/provenance metadata and let the contributor inspect captured assets for personal or secret data. A public URL alone does not grant redistribution rights.
 

@@ -22,7 +22,9 @@ WebGL retention is off by default. Enable it for a specific site from the popup;
 
 - Captures a sanitized HTML subtree, a curated set of computed CSS properties for the root and descendants, a selector, viewport dimensions, bounding box, and timestamp, all on the current page and in local browser storage. The source URL omits credentials, query parameters, and fragments to reduce accidental leakage.
 - The optional screenshot checkbox starts unchecked. Enable it to save a separate JPEG of the visible viewport alongside the selection. A selected canvas's own PNG is available independently of this checkbox.
+- **CSS/WAAPI 动画关键帧** can be sampled with the popup checkbox. The snapshot includes bounded timing, play state, and safe keyframe values linked to captured node IDs. It is read-only metadata, not the JavaScript that created or triggered the animation. Script and event arrays remain empty by default.
 - **WebGL 保帧** is off by default. Enable it for a specific site when you want newly created WebGL contexts on that host to use `preserveDrawingBuffer: true`; then refresh the page. It does not alter existing contexts, WebGPU, worker-created OffscreenCanvas contexts, source code, or shader code. It requests the host permission only after your click and can be disabled from the same popup.
+- **CSS/WAAPI animation metadata** is opt-in. It snapshots active effects on the selected DOM subtree, maps them to captured node IDs, and keeps bounded keyframe/timing values. It does not read JavaScript source, invoke page handlers, or control play/pause/time.
 - **录制画布动效** stores about three seconds (maximum six) of silent WebM from the selected canvas. Keep the page visible; move the pointer during capture if the animation responds to it. If a WebGL video is blank, enable this site's WebGL retention and refresh before recording. **裁切目标区域合成图** stores one JPEG crop of the browser-composited selected bounds, which can preserve a WebGL frame after its drawing buffer is cleared. Neither result is executable source code.
 - Script and event arrays remain empty. Arbitrary page JavaScript cannot be reliably attributed to an element; script recording must be an explicit later action.
 - Removes script/style/iframe/object/embed/template nodes, hidden descendants (`hidden`, `aria-hidden`, `display:none`, and hidden visibility), inline event handlers, nonce/integrity attributes, and form control values. Review text and asset URLs before sharing because page content can still contain private information.
@@ -37,6 +39,7 @@ WebGL retention is off by default. Enable it for a specific site from the popup;
 - Click **Export** on a recent item, confirm a JSON file downloads, and pass that file to `quarry package create`.
 - Click **Delete** and confirm the item disappears from the local list; no network request should occur.
 - Click **导入 Capture JSON**, select a previously exported file, and confirm it appears in Recent captures; malformed or oversized files should be rejected locally.
+- Capture a CSS animation with **CSS/WAAPI animation metadata** enabled; Details should show keyframes/timing linked to a captured node ID, while scripts/events stay separate.
 - Capture a page with a canvas/fixed background, verify the saved item's details show the viewport image, export it, and confirm the JSON includes a `screenshot` data URL. Repeat with the checkbox disabled and confirm there is no screenshot field.
 
 Pages such as `chrome://` and the Chrome Web Store prohibit content-script injection. The popup reports the browser's error on those pages.

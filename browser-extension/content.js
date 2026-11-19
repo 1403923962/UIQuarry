@@ -278,7 +278,7 @@
   function createCapture(root, metadata) {
     const rect = root.getBoundingClientRect();
     const selector = selectorFor(root);
-    const state = { cssRules: [], count: 0 };
+    const state = { cssRules: [], count: 0, nodeIds: new WeakMap() };
     const clone = cloneSanitized(root, state, true);
     if (!clone) throw new Error("The selected element cannot be captured.");
     const html = clone.outerHTML;
@@ -301,8 +301,100 @@
       bounds: { x: round(rect.x), y: round(rect.y), width: round(rect.width), height: round(rect.height) },
       notes: "Scripts and interaction events are not collected automatically. Add only explicitly selected, licensed source in a later recording step. Input values are removed; review captured text and URLs before sharing."
     };
+    if (metadata.includeAnimations === true) {
+      try {
+        const observation = captureAnimations(root, state.nodeIds);
+        if (observation.animations.length) capture.animations = observation.animations;
+        if (observation.truncated) capture.notes += " 动画关键帧观察因数量、属性或体积限制而截断。";
+      } catch (error) {
+        capture.notes += ` 动画关键帧读取失败：${error.message}`;
+      }
+    }
     if (root instanceof HTMLCanvasElement) captureCanvasFrame(root, capture);
     return capture;
+  }
+
+  function captureAnimations(root, nodeIds) {
+    let animations;
+    try {
+      animations = root.getAnimations({ subtree: true });
+    } catch {
+      animations = [];
+      for (const node of [root, ...root.querySelectorAll("*")].slice(0, 300)) {
+        try { animations.push(...node.getAnimations()); } catch { /* An inaccessible effect is omitted. */ }
+      }
+    }
+    const seen = new Set();
+    const output = [];
+    let truncated = animations.length > 32;
+    const propertyNames = new Set(STYLE_PROPERTIES.map(toCssProperty));
+    for (const animation of animations) {
+      if (output.length >= 32) { truncated = true; break; }
+      if (seen.has(animation)) continue;
+      seen.add(animation);
+      try {
+        const effect = animation.effect;
+        const target = effect?.target;
+        const targetId = target && nodeIds.get(target);
+        if (!effect || !targetId || animation.playState === "idle") continue;
+        const timing = effect.getTiming();
+        const timeline = animation.timeline;
+        const timelineType = timeline === document.timeline ? "document"
+          : /Scroll|View/.test(timeline?.constructor?.name || "") ? "scroll"
+            : timeline ? "other" : "unknown";
+        const sourceFrames = effect.getKeyframes();
+        if (sourceFrames.length > 32) truncated = true;
+        const keyframes = sourceFrames.slice(0, 32).map(frame => {
+          const properties = {};
+          for (const [rawName, rawValue] of Object.entries(frame)) {
+            const name = toCssProperty(rawName);
+            if (!propertyNames.has(name) || name.startsWith("--") || name === "content" || name.startsWith("on")) continue;
+            const value = typeof rawValue === "number" && Number.isFinite(rawValue) ? rawValue
+              : typeof rawValue === "string" && rawValue.length <= 256 && !/url\s*\(/i.test(rawValue) ? rawValue : undefined;
+            if (rawValue !== undefined && value === undefined) truncated = true;
+            if (value !== undefined && Object.keys(properties).length < 24) properties[name] = value;
+            else if (value !== undefined && Object.keys(properties).length >= 24) truncated = true;
+          }
+          const entry = { properties };
+          if (frame.offset === null || (typeof frame.offset === "number" && Number.isFinite(frame.offset))) entry.offset = frame.offset;
+          if (typeof frame.easing === "string" && frame.easing.length <= 128) entry.easing = frame.easing;
+          if (["auto", "replace", "add", "accumulate"].includes(frame.composite)) entry.composite = frame.composite;
+          return entry;
+        });
+        const duration = typeof timing.duration === "number" && Number.isFinite(timing.duration) ? timing.duration : "auto";
+        const iterations = typeof timing.iterations === "number" && timing.iterations === Infinity ? "infinite"
+          : Number.isFinite(timing.iterations) ? timing.iterations : "infinite";
+        const record = {
+          targetId,
+          kind: ["CSSAnimation", "CSSTransition"].includes(animation.constructor?.name) ? animation.constructor.name : "Animation",
+          playState: ["running", "paused", "finished", "pending"].includes(animation.playState) ? animation.playState : "pending",
+          playbackRate: Number.isFinite(animation.playbackRate) ? animation.playbackRate : 1,
+          timelineType,
+          keyframes,
+          timing: {
+            delay: finiteOrDefault(timing.delay, 0), duration, endDelay: finiteOrDefault(timing.endDelay, 0), iterations,
+            direction: ["normal", "reverse", "alternate", "alternate-reverse"].includes(timing.direction) ? timing.direction : "normal",
+            easing: typeof timing.easing === "string" ? timing.easing.slice(0, 128) : "linear",
+            fill: ["none", "forwards", "backwards", "both", "auto"].includes(timing.fill) ? timing.fill : "none"
+          }
+        };
+        if (timelineType === "document" && Number.isFinite(animation.currentTime)) record.currentTime = animation.currentTime;
+        if (typeof effect.pseudoElement === "string" && effect.pseudoElement.length <= 32) record.pseudoElement = effect.pseudoElement;
+        if (keyframes.some(frame => Object.keys(frame.properties).length)) output.push(record);
+      } catch {
+        // Read-only observation is best-effort; one page-defined effect must not abort Capture.
+      }
+    }
+    while (output.length && new TextEncoder().encode(JSON.stringify(output)).byteLength > 256_000) { output.pop(); truncated = true; }
+    return { animations: output, truncated };
+  }
+
+  function toCssProperty(name) {
+    return name.replace(/[A-Z]/g, letter => `-${letter.toLowerCase()}`).toLowerCase();
+  }
+
+  function finiteOrDefault(value, fallback) {
+    return Number.isFinite(value) ? value : fallback;
   }
 
   function captureCanvasFrame(canvas, capture) {
@@ -349,6 +441,7 @@
       if (copy.tagName === "TEXTAREA") copy.textContent = "";
     }
     copy.setAttribute("data-quarry-capture-id", quarryId);
+    state.nodeIds.set(original, quarryId);
     const style = getComputedStyle(original);
     const declarations = STYLE_PROPERTIES.map((property) => [property, style.getPropertyValue(property)])
       .filter(([, value]) => value && value !== "normal" && value !== "none" && !/url\s*\(/i.test(value));

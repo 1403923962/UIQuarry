@@ -24,6 +24,8 @@ An optional `compositeBitmap` stores a JPEG crop of the selected element's final
 
 An optional `canvasRecording` stores at most 6,000 ms of video from the selected canvas via `captureStream`, when that API and codec are available. It is capped at 3,000,000 data-URL characters and must use `video/webm`. It may include only canvas video frames: it is not a copy of the component's code or shader and may not reproduce cursor interaction. `canvasBitmap`, `compositeBitmap`, `canvasRecording`, and the broader viewport `screenshot` are independent optional observations; they are not executable replay data.
 
+An optional `animations` array records bounded Web Animations API observations for the selected subtree: target IDs, play state, timeline type, timing, and sampled keyframe values. It holds at most 32 animations, 32 keyframes per animation, and 24 safe CSS properties per keyframe. CSS custom properties, `content`, active URL values, and unsupported fields are excluded; the offline CLI also caps the serialized `animations` value at 262,144 bytes. This metadata does not include JavaScript, event handlers, shader source, or the logic that created an animation, and it does not guarantee replay of the original behavior. Older captures may omit `animations`.
+
 ## Package layout
 
 Suggested paths are conventions; manifest `files` is authoritative.

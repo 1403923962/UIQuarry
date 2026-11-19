@@ -10,6 +10,19 @@
   "css": ".notice{display:flex;gap:12px;padding:16px;background-color:#f4f4f4}\n.notice strong{font-weight:700}",
   "scripts": [],
   "events": [{"type": "pointerenter", "target": ".notice", "atMs": 0, "state": "hover"}],
+  "animations": [{
+    "targetId": "quarry-target-1",
+    "kind": "CSSTransition",
+    "playState": "running",
+    "currentTime": 420,
+    "playbackRate": 1,
+    "timelineType": "document",
+    "timing": {"delay": 0, "duration": 800, "endDelay": 0, "iterations": 1, "direction": "normal", "easing": "ease-out", "fill": "both"},
+    "keyframes": [
+      {"offset": 0, "easing": "ease-out", "composite": "replace", "properties": {"opacity": 0, "transform": "translateY(8px)"}},
+      {"offset": 1, "easing": "linear", "composite": "replace", "properties": {"opacity": 1, "transform": "translateY(0px)"}}
+    ]
+  }],
   "viewport": {"width": 1440, "height": 900, "deviceScaleFactor": 1},
   "bounds": {"x": 80, "y": 120, "width": 600, "height": 96},
   "notes": "Sanitized fragment example."

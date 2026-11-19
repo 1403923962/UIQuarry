@@ -51,3 +51,7 @@ button.capture-action.danger:hover { background: #f9ebea; }
 #composite-frame[hidden], #recording-frame[hidden] { display: none; }
 #composite-frame figcaption, #recording-frame figcaption { margin-bottom: 4px; color: #53615a; font-size: 12px; }
 #composite-image, #recording-video { display: block; width: 100%; max-height: 160px; margin-bottom: 6px; object-fit: contain; background: #1a1a1a; }
+#animations-frame { margin-top: 8px; }
+#animations-frame[hidden] { display: none; }
+#animations-frame summary { color: #435348; font-size: 12px; cursor: pointer; }
+#animations-preview { max-height: 200px; overflow: auto; white-space: pre-wrap; word-break: break-word; font: 10px/1.4 ui-monospace,monospace; color: #53615a; background: #f4f7f5; padding: 8px; border-radius: 5px; }
